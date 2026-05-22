@@ -23,10 +23,35 @@ def main(stdscr: curses.window, nick: str, password: str):
 
     ui = ChatUI(stdscr)
 
+    current_channel = ""
+    joined_channels = []
+
     def on_new_message():
         pass
 
     client.on_message = on_new_message
+
+    def handle_join(channel: str):
+        nonlocal current_channel
+        chan = channel.lstrip("#")
+        if chan not in joined_channels:
+            joined_channels.append(chan)
+        current_channel = chan
+
+    client.on_join = handle_join
+
+    def handle_part(channel: str):
+        nonlocal current_channel
+        chan = channel.lstrip("#")
+        if chan in joined_channels:
+            joined_channels.remove(chan)
+        if current_channel == chan:
+            if joined_channels:
+                current_channel = joined_channels[-1]
+            else:
+                current_channel = ""
+
+    client.on_part = handle_part
 
     ui.add_message("SYSTEM", f"Connecting to {SERVER}:{PORT} ...")
     try:
@@ -37,8 +62,6 @@ def main(stdscr: curses.window, nick: str, password: str):
         return
 
     ui.add_message("SYSTEM", f"Connected as {nick}. Type /join #channel to join.")
-
-    current_channel = ""
 
     def handle_command(line: str):
         nonlocal current_channel
@@ -56,9 +79,11 @@ def main(stdscr: curses.window, nick: str, password: str):
                     channel = arg.strip()
                     if channel:
                         client.join(channel)
-                        current_channel = channel.lstrip("#")
-                        ui.set_status(f"#{current_channel}", client.nick)
-                        ui.add_message("SYSTEM", f"Joining #{current_channel} ...")
+                        chan = channel.lstrip("#")
+                        if chan not in joined_channels:
+                            joined_channels.append(chan)
+                        current_channel = chan
+                        ui.add_message("SYSTEM", f"Joining {channel} ...")
                     else:
                         ui.add_message("SYSTEM", "Usage: /join #channel")
 
@@ -103,15 +128,38 @@ def main(stdscr: curses.window, nick: str, password: str):
         stdscr.timeout(100)
 
         try:
-            curses.echo()
-            stdscr.move(ui.input_y, 2)
-            stdscr.clrtoeol()
-            raw = stdscr.getstr(ui.input_y, 2, ui.width - 3)
-            curses.noecho()
-            line = raw.decode("utf-8", errors="replace")
-            handle_command(line)
+            ch = stdscr.get_wch()
         except curses.error:
-            curses.noecho()
+            ch = None
+
+        if ch is not None:
+            if isinstance(ch, str):
+                if ch in ("\r", "\n"):
+                    line = ui.input_buffer
+                    ui.input_buffer = ""
+                    ui._draw_messages()
+                    handle_command(line)
+                elif ch in ("\x7f", "\x08", "\b"):
+                    if len(ui.input_buffer) > 0:
+                        ui.input_buffer = ui.input_buffer[:-1]
+                        ui._draw_messages()
+                elif 32 <= ord(ch) < 127 or ord(ch) >= 128:
+                    ui.input_buffer += ch
+                    ui._draw_messages()
+            elif isinstance(ch, int):
+                if ch == curses.KEY_BACKSPACE:
+                    if len(ui.input_buffer) > 0:
+                        ui.input_buffer = ui.input_buffer[:-1]
+                        ui._draw_messages()
+                elif ch == curses.KEY_ENTER:
+                    line = ui.input_buffer
+                    ui.input_buffer = ""
+                    ui._draw_messages()
+                    handle_command(line)
+                elif ch == curses.KEY_PPAGE:
+                    ui.scroll_up()
+                elif ch == curses.KEY_NPAGE:
+                    ui.scroll_down()
 
         while client.message_queue:
             tag, text = client.message_queue.popleft()

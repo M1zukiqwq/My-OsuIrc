@@ -5,6 +5,14 @@ import threading
 from collections import deque
 from typing import Callable
 
+# DEBUG: write raw IRC traffic to debug.log
+import os
+_debug_log = open(os.path.join(os.path.dirname(__file__), "debug.log"), "w", encoding="utf-8")
+
+def _debug(msg: str):
+    _debug_log.write(msg + "\n")
+    _debug_log.flush()
+
 
 def parse_irc_message(raw: str) -> tuple[str, str, list[str]]:
     """Parse an IRC message into (prefix, command, params).
@@ -62,6 +70,8 @@ class IrcClient:
         self.message_queue: deque[tuple[str, str]] = deque()
         # callback invoked (from reader thread) when a new message arrives
         self.on_message: Callable[[], None] | None = None
+        self.on_join: Callable[[str], None] | None = None
+        self.on_part: Callable[[str], None] | None = None
 
     # -- connection --
 
@@ -108,6 +118,7 @@ class IrcClient:
     def _send_raw(self, line: str) -> None:
         if self._sock is None:
             return
+        _debug(f">>> {line}")
         self._sock.sendall((line + "\r\n").encode("utf-8", errors="replace"))
 
     def _reader_loop(self) -> None:
@@ -131,6 +142,7 @@ class IrcClient:
         self._enqueue("SYSTEM", "Disconnected from server.")
 
     def _handle_line(self, line: str) -> None:
+        _debug(f"<<< {line}")
         prefix, command, params = parse_irc_message(line)
 
         match command:
@@ -142,19 +154,28 @@ class IrcClient:
                 sender = extract_nick(prefix)
                 target = params[0] if params else ""
                 text = params[1] if len(params) > 1 else ""
-                tag = target if target == self.nick else sender
+                # Channel messages (#channel) → tag is the channel.
+                # Private messages (target == our nick) → tag is the sender.
+                if target.startswith("#"):
+                    tag = target
+                else:
+                    tag = sender
                 self._enqueue(tag, f"<{sender}> {text}")
 
             case "JOIN":
                 sender = extract_nick(prefix)
                 channel = params[0] if params else ""
                 self._enqueue(channel, f"-- {sender} joined {channel}")
+                if sender.lower() == self.nick.lower() and self.on_join:
+                    self.on_join(channel)
 
             case "PART":
                 sender = extract_nick(prefix)
                 channel = params[0] if params else ""
                 text = f" ({params[1]})" if len(params) > 1 else ""
                 self._enqueue(channel, f"-- {sender} left {channel}{text}")
+                if sender.lower() == self.nick.lower() and self.on_part:
+                    self.on_part(channel)
 
             case "QUIT":
                 sender = extract_nick(prefix)
