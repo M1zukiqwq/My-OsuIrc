@@ -9,13 +9,17 @@ If not provided, nick and password will be prompted in the terminal.
 import argparse
 import curses
 import getpass
+import re
 import sys
+import time
 
 from irc import IrcClient
 from ui import ChatUI
 
 SERVER = "irc.ppy.sh"
 PORT = 6667
+
+MP_ROOM_RE = re.compile(r"https://osu\.ppy\.sh/mp/(\d+)")
 
 
 def main(stdscr: curses.window, nick: str, password: str):
@@ -25,6 +29,7 @@ def main(stdscr: curses.window, nick: str, password: str):
 
     current_channel = ""
     joined_channels = []
+    pending_mp_until = 0.0  # epoch; while > now we're waiting on a BanchoBot reply
 
     def on_new_message():
         pass
@@ -95,8 +100,17 @@ def main(stdscr: curses.window, nick: str, password: str):
                         ui.add_message("SYSTEM", "Usage: /nick newname")
 
                 case "/quit":
-                    client.disconnect()
-                    raise SystemExit
+                    force = arg.strip().lower() == "force"
+                    remaining = pending_mp_until - time.time()
+                    if remaining > 0 and not force:
+                        ui.add_message(
+                            current_view(),
+                            f"!! waiting {remaining:.0f}s for BanchoBot reply to recent !mp. "
+                            "Use '/quit force' to abort anyway.",
+                        )
+                    else:
+                        client.disconnect()
+                        raise SystemExit
 
                 case "/msg":
                     parts2 = arg.split(" ", 1)
@@ -104,25 +118,89 @@ def main(stdscr: curses.window, nick: str, password: str):
                         target, text = parts2
                         client.send(target, text)
                         ui.add_message(target, f"<{client.nick}> {text}")
+                        # Confirm in current view so the user knows it sent.
+                        view = current_view()
+                        if view.lstrip("#").lower() != target.lower():
+                            ui.add_message(view, f"-- PM to {target}: {text}")
                     else:
                         ui.add_message("SYSTEM", "Usage: /msg target text")
+
+                case "/switch" | "/window" | "/w":
+                    name = arg.strip()
+                    if not name:
+                        ui.add_message(
+                            current_view(),
+                            f"-- joined: {', '.join(joined_channels) if joined_channels else '(none)'}. "
+                            "Usage: /switch <channel|SYSTEM|nick>",
+                        )
+                    elif name.upper() == "SYSTEM":
+                        current_channel = ""
+                    else:
+                        current_channel = name.lstrip("#")
 
                 case _:
                     ui.add_message("SYSTEM", f"Unknown command: {cmd}")
 
         elif current_channel:
-            client.send(f"#{current_channel}", line)
-            ui.add_message(f"#{current_channel}", f"<{client.nick}> {line}")
+            low = line.lower().lstrip()
+            # Only "!mp make" / "!mp makeprivate" need to be PM'd to BanchoBot.
+            # Other !mp commands (close, settings, invite, ...) must stay in
+            # the channel — they operate on the room you're currently in.
+            if low.startswith("!mp make"):
+                client.send("BanchoBot", line)
+                ui.add_message("BanchoBot", f"<{client.nick}> {line}")
+                pending_mp_until = time.time() + 20
+                ui.add_message(
+                    f"#{current_channel}",
+                    f"-- sent to BanchoBot (as PM): {line}  *** DO NOT QUIT *** waiting up to 20s for reply.",
+                )
+            else:
+                client.send(f"#{current_channel}", line)
+                ui.add_message(f"#{current_channel}", f"<{client.nick}> {line}")
         else:
             ui.add_message("SYSTEM", "Join a channel first with /join #channel")
 
-    # Main loop: drain message queue + read input
-    while client._running:
+    def current_view() -> str:
+        return f"#{current_channel}" if current_channel else "SYSTEM"
+
+    def drain_queue():
+        nonlocal current_channel, pending_mp_until
+        any_drained = False
         while client.message_queue:
             tag, text = client.message_queue.popleft()
-            ui.add_message(tag, text)
+            ui.add_message(tag, text, redraw=False)
+            any_drained = True
+            # Mirror any BanchoBot PM into the user's current view.
+            if tag == "BanchoBot":
+                pending_mp_until = 0.0
+                view = current_view()
+                if view.lstrip("#").lower() != tag.lower():
+                    ui.add_message(view, f"-- [BanchoBot PM] {text}", redraw=False)
+                # Auto-join the MP room once BanchoBot confirms creation.
+                m = MP_ROOM_RE.search(text)
+                if m:
+                    mp_channel = f"#mp_{m.group(1)}"
+                    client.join(mp_channel)
+                    chan = mp_channel.lstrip("#")
+                    if chan not in joined_channels:
+                        joined_channels.append(chan)
+                    prev = current_channel
+                    current_channel = chan
+                    ui.add_message("SYSTEM", f"Auto-joining {mp_channel} ...", redraw=False)
+                    if prev and prev != chan:
+                        ui.add_message(f"#{prev}", f"-- room created: {mp_channel}, switched.", redraw=False)
+        if any_drained:
+            ui._draw_messages()
 
-        ui.set_status(f"#{current_channel}" if current_channel else "SYSTEM", client.nick)
+    # Main loop: drain message queue + read input
+    while client._running:
+        drain_queue()
+
+        view_name = f"#{current_channel}" if current_channel else "SYSTEM"
+        remaining = pending_mp_until - time.time()
+        if remaining > 0:
+            view_name += f"  [waiting BanchoBot {remaining:.0f}s — DO NOT QUIT]"
+        ui.set_status(view_name, client.nick)
 
         stdscr.nodelay(True)
         stdscr.timeout(100)
@@ -161,13 +239,9 @@ def main(stdscr: curses.window, nick: str, password: str):
                 elif ch == curses.KEY_NPAGE:
                     ui.scroll_down()
 
-        while client.message_queue:
-            tag, text = client.message_queue.popleft()
-            ui.add_message(tag, text)
+        drain_queue()
 
-    while client.message_queue:
-        tag, text = client.message_queue.popleft()
-        ui.add_message(tag, text)
+    drain_queue()
 
     ui.add_message("SYSTEM", "Press Enter to exit.")
     stdscr.nodelay(False)

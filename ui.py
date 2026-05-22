@@ -43,16 +43,16 @@ class ChatUI:
         self.status_y = self.height - 2
         self.msg_height = self.height - 3  # -1 input, -1 status, -1 for 0-index
 
-    def add_message(self, tag: str, text: str) -> None:
+    def add_message(self, tag: str, text: str, redraw: bool = True) -> None:
         self.messages.append((tag, text))
-        if self._scroll_offset > 0:
-            # keep following if user hasn't scrolled up
-            pass  # don't auto-scroll when user is reading history
-        self._draw_messages()
+        if redraw:
+            self._draw_messages()
 
     def set_status(self, channel: str, nick: str) -> None:
+        if channel == self.current_channel and nick == self.nick:
+            return  # avoid pointless redraw every main-loop tick
         if channel != self.current_channel:
-            self._scroll_offset = 0  # reset scroll offset only on channel switch
+            self._scroll_offset = 0
         self.current_channel = channel
         self.nick = nick
         self._draw_messages()
@@ -89,7 +89,7 @@ class ChatUI:
         self.stdscr.refresh()
 
     def _draw_status(self) -> None:
-        bar = f" [{self.nick}] | Channel: {self.current_channel} | /join #chan  /nick name  /quit"
+        bar = f" [{self.nick}] | View: {self.current_channel} | /join #chan  /switch X  /msg nick text  /quit"
         bar = bar[: self.width - 1]
         try:
             self.stdscr.addstr(self.status_y, 0, bar, curses.A_REVERSE)

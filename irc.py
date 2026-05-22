@@ -5,9 +5,10 @@ import threading
 from collections import deque
 from typing import Callable
 
-# DEBUG: write raw IRC traffic to debug.log
+# DEBUG: append raw IRC traffic to debug.log (keep history across runs)
 import os
-_debug_log = open(os.path.join(os.path.dirname(__file__), "debug.log"), "w", encoding="utf-8")
+_debug_log = open(os.path.join(os.path.dirname(__file__), "debug.log"), "a", encoding="utf-8")
+_debug_log.write("\n===== new session =====\n")
 
 def _debug(msg: str):
     _debug_log.write(msg + "\n")
@@ -132,11 +133,20 @@ class IrcClient:
 
             self._recv_buffer += data.decode("utf-8", errors="replace")
 
-            while "\r\n" in self._recv_buffer:
-                line, self._recv_buffer = self._recv_buffer.split("\r\n", 1)
+            # osu! sometimes batches messages with only \n between them and
+            # \r\n at the very end of the chunk. Split on \n and strip any
+            # trailing \r so both line endings work.
+            while "\n" in self._recv_buffer:
+                line, self._recv_buffer = self._recv_buffer.split("\n", 1)
+                line = line.rstrip("\r")
                 if not line:
                     continue
-                self._handle_line(line)
+                try:
+                    self._handle_line(line)
+                except Exception as e:
+                    # Don't let a single bad line kill the reader thread.
+                    _debug(f"!!! handler error: {e!r} on line: {line!r}")
+                    self._enqueue("SYSTEM", f"!! handler error: {e}")
 
         self._running = False
         self._enqueue("SYSTEM", "Disconnected from server.")
@@ -150,7 +160,7 @@ class IrcClient:
                 self._send_raw(f"PONG :{params[0] if params else ''}")
                 return
 
-            case "PRIVMSG":
+            case "PRIVMSG" | "NOTICE":
                 sender = extract_nick(prefix)
                 target = params[0] if params else ""
                 text = params[1] if len(params) > 1 else ""
@@ -160,7 +170,8 @@ class IrcClient:
                     tag = target
                 else:
                     tag = sender
-                self._enqueue(tag, f"<{sender}> {text}")
+                prefix_marker = "-" if command == "NOTICE" else ""
+                self._enqueue(tag, f"{prefix_marker}<{sender}>{prefix_marker} {text}")
 
             case "JOIN":
                 sender = extract_nick(prefix)
@@ -202,12 +213,13 @@ class IrcClient:
                         channel = params[1] if len(params) > 1 else ""
                         self._enqueue(channel or "SYSTEM", f"-- Topic: {text}")
                     elif command in ("353",):
-                        # name list
-                        text = params[-1] if params else ""
-                        channel = params[2] if len(params) > 2 else ""
-                        self._enqueue(channel or "SYSTEM", f"-- Users: {text}")
+                        # Name list. Dropped entirely — for channels like
+                        # #osu it's hundreds of lines and is never useful.
+                        pass
                     elif command == "366":
-                        pass  # end of names, skip
+                        # End of NAMES — give the channel one short marker.
+                        channel = params[1] if len(params) > 1 else ""
+                        self._enqueue(channel or "SYSTEM", "-- (joined, ready)")
                     elif command in ("431", "432", "433"):
                         # nick errors
                         text = params[-1] if params else line
