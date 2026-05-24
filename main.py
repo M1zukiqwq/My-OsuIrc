@@ -12,6 +12,10 @@ import getpass
 import re
 import sys
 import time
+import threading
+
+if sys.platform == "win32":
+    import msvcrt
 
 from irc import IrcClient
 from ui import ChatUI
@@ -192,6 +196,21 @@ def main(stdscr: curses.window, nick: str, password: str):
         if any_drained:
             ui._draw_messages()
 
+    # -- Windows input thread for IME/CJK support --
+    # curses.get_wch() on Windows (PDCurses) cannot receive IME-composed characters.
+    # We use a background thread with msvcrt.getwch() which works with IME.
+    input_queue: deque = deque()
+    input_lock = threading.Lock()
+
+    def _input_thread():
+        while client._running:
+            ch = msvcrt.getwch()
+            with input_lock:
+                input_queue.append(ch)
+
+    t = threading.Thread(target=_input_thread, daemon=True)
+    t.start()
+
     # Main loop: drain message queue + read input
     while client._running:
         drain_queue()
@@ -202,54 +221,38 @@ def main(stdscr: curses.window, nick: str, password: str):
             view_name += f"  [waiting BanchoBot {remaining:.0f}s — DO NOT QUIT]"
         ui.set_status(view_name, client.nick)
 
-        stdscr.nodelay(True)
-        stdscr.timeout(100)
+        # Process all queued input characters
+        with input_lock:
+            chars = list(input_queue)
+            input_queue.clear()
 
-        try:
-            ch = stdscr.get_wch()
-        except curses.error:
-            ch = None
-
-        if ch is not None:
-            if isinstance(ch, str):
-                if ch in ("\r", "\n"):
-                    line = ui.input_buffer
-                    ui.input_buffer = ""
+        for ch in chars:
+            if ch in ("\r", "\n"):
+                line = ui.input_buffer
+                ui.input_buffer = ""
+                ui._draw_messages()
+                handle_command(line)
+            elif ch in ("\x7f", "\x08", "\b"):
+                if len(ui.input_buffer) > 0:
+                    ui.input_buffer = ui.input_buffer[:-1]
                     ui._draw_messages()
-                    handle_command(line)
-                elif ch in ("\x7f", "\x08", "\b"):
-                    if len(ui.input_buffer) > 0:
-                        ui.input_buffer = ui.input_buffer[:-1]
-                        ui._draw_messages()
-                elif 32 <= ord(ch) < 127 or ord(ch) >= 128:
-                    ui.input_buffer += ch
-                    ui._draw_messages()
-            elif isinstance(ch, int):
-                if ch == curses.KEY_BACKSPACE:
-                    if len(ui.input_buffer) > 0:
-                        ui.input_buffer = ui.input_buffer[:-1]
-                        ui._draw_messages()
-                elif ch == curses.KEY_ENTER:
-                    line = ui.input_buffer
-                    ui.input_buffer = ""
-                    ui._draw_messages()
-                    handle_command(line)
-                elif ch == curses.KEY_PPAGE:
-                    ui.scroll_up()
-                elif ch == curses.KEY_NPAGE:
-                    ui.scroll_down()
+            # \x00 or \xe0 = function key prefix on Windows; discard
+            elif ch in ("\x00", "\xe0"):
+                continue
+            elif ord(ch) >= 32:
+                ui.input_buffer += ch
+                ui._draw_messages()
 
         drain_queue()
+        time.sleep(0.05)  # avoid busy-loop when no input
 
     drain_queue()
 
     ui.add_message("SYSTEM", "Press Enter to exit.")
-    stdscr.nodelay(False)
-    stdscr.timeout(-1)
-    try:
-        stdscr.getstr()
-    except curses.error:
-        pass
+    while True:
+        ch = msvcrt.getwch()
+        if ch in ("\r", "\n"):
+            break
 
 
 if __name__ == "__main__":
