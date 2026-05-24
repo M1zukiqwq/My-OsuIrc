@@ -13,6 +13,7 @@ import re
 import sys
 import time
 import threading
+from collections import deque
 
 if sys.platform == "win32":
     import msvcrt
