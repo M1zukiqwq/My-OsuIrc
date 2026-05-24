@@ -2,7 +2,30 @@
 
 import curses
 import curses.textpad
+import unicodedata
 from collections import deque
+
+
+def _display_width(s: str) -> int:
+    """Return the terminal display width of a string (CJK = 2 columns)."""
+    w = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ("W", "F"):
+            w += 2
+        else:
+            w += 1
+    return w
+
+
+def _truncate_to_width(s: str, max_width: int) -> str:
+    """Truncate string so its display width <= max_width, never splitting a CJK char."""
+    w = 0
+    for i, ch in enumerate(s):
+        cw = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if w + cw > max_width:
+            return s[:i]
+        w += cw
+    return s
 
 
 class ChatUI:
@@ -29,6 +52,7 @@ class ChatUI:
         self.current_channel = "SYSTEM"
         self.nick = ""
         self.input_buffer = ""
+        self._last_display_name = "SYSTEM"
 
         # will be set by main loop
         self.on_input = None  # type: ignore
@@ -48,14 +72,27 @@ class ChatUI:
         if redraw:
             self._draw_messages()
 
-    def set_status(self, channel: str, nick: str) -> None:
-        if channel == self.current_channel and nick == self.nick:
-            return  # avoid pointless redraw every main-loop tick
-        if channel != self.current_channel:
+    def set_status(self, display_name: str, nick: str, force_redraw: bool = False) -> None:
+        # Extract the stable channel name (before any status suffix like "waiting BanchoBot")
+        base_channel = display_name.split("  ")[0] if "  " in display_name else display_name
+
+        if not force_redraw and base_channel == self.current_channel and nick == self.nick and display_name == self._last_display_name:
+            return
+
+        switched = base_channel != self.current_channel
+        if switched:
             self._scroll_offset = 0
-        self.current_channel = channel
+        self.current_channel = base_channel
+        self._last_display_name = display_name
         self.nick = nick
-        self._draw_messages()
+        # Only full redraw if channel actually changed or forced (e.g. new messages)
+        if switched or force_redraw:
+            self._draw_messages()
+        else:
+            # Same channel, just status text changed — update status bar only
+            self._draw_status()
+            self._draw_input()
+            self.stdscr.refresh()
 
     # -- drawing --
 
@@ -74,13 +111,26 @@ class ChatUI:
         visible = self.msg_height
         start = max(0, total - visible - self._scroll_offset)
         end = max(0, total - self._scroll_offset)
+        max_col = self.width - 1
 
+        blank = " " * self.width
         for i, line in enumerate(range(start, end)):
             y = i
             if y >= visible:
                 break
             try:
-                self.stdscr.addnstr(y, 0, filtered_msgs[line], self.width - 1)
+                s = _truncate_to_width(filtered_msgs[line], max_col)
+                # Write blank first to clear any CJK double-width residue,
+                # then write the actual content on top.
+                self.stdscr.addstr(y, 0, blank)
+                self.stdscr.addstr(y, 0, s)
+            except curses.error:
+                pass
+
+        # Clear remaining lines so stale content doesn't linger
+        for y in range(end - start, visible):
+            try:
+                self.stdscr.addstr(y, 0, blank)
             except curses.error:
                 pass
 
@@ -89,9 +139,11 @@ class ChatUI:
         self.stdscr.refresh()
 
     def _draw_status(self) -> None:
-        bar = f" [{self.nick}] | View: {self.current_channel} | /join #chan  /switch X  /msg nick text  /quit"
-        bar = bar[: self.width - 1]
+        view_text = self._last_display_name if self._last_display_name else self.current_channel
+        bar = f" [{self.nick}] | View: {view_text} | /join #chan  /switch X  /msg nick text  /quit"
+        bar = _truncate_to_width(bar, self.width - 1)
         try:
+            self.stdscr.addstr(self.status_y, 0, " " * self.width, curses.A_REVERSE)
             self.stdscr.addstr(self.status_y, 0, bar, curses.A_REVERSE)
         except curses.error:
             pass
@@ -99,12 +151,31 @@ class ChatUI:
     def _draw_input(self) -> None:
         try:
             self.stdscr.move(self.input_y, 0)
-            self.stdscr.addstr(self.input_y, 0, "> ")
             self.stdscr.clrtoeol()
-            # Draw input buffer (cropped to fit the screen width)
-            max_len = self.width - 3
-            visible_buf = self.input_buffer[-max_len:] if max_len > 0 else ""
-            self.stdscr.addstr(self.input_y, 2, visible_buf)
+            self.stdscr.addstr("> ")
+            # Draw input buffer (cropped to fit the screen width by display columns)
+            # Reserve 1 extra col to avoid curses error on last cell of last row
+            max_col = self.width - 4
+            buf = ""
+            if max_col > 0 and self.input_buffer:
+                # Take as many chars from the right as fit in max_col display width
+                buf = self.input_buffer
+                while buf and _display_width(buf) > max_col:
+                    buf = buf[1:]
+                try:
+                    self.stdscr.addstr(buf)
+                except curses.error:
+                    # Last cell edge — trim one more char and retry
+                    if buf:
+                        buf = buf[:-1]
+                        try:
+                            self.stdscr.addstr(buf)
+                        except curses.error:
+                            pass
+            # Position cursor at end of input text
+            cursor_col = 2 + _display_width(buf) if buf else 2
+            cursor_col = min(cursor_col, self.width - 1)
+            self.stdscr.move(self.input_y, cursor_col)
         except curses.error:
             pass
 
