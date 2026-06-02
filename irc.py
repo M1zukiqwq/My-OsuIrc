@@ -66,6 +66,8 @@ class IrcClient:
         self._reader_thread: threading.Thread | None = None
         self._running = False
         self._recv_buffer = ""
+        self._send_lock = threading.Lock()
+        self._queue_lock = threading.Lock()
 
         # outgoing message queue consumed by the UI
         self.message_queue: deque[tuple[str, str]] = deque()
@@ -114,18 +116,30 @@ class IrcClient:
     def send(self, target: str, text: str) -> None:
         self._send_raw(f"PRIVMSG {target} :{text}")
 
+    def drain_messages(self) -> list[tuple[str, str]]:
+        """Atomically flush queued UI messages."""
+        with self._queue_lock:
+            messages = list(self.message_queue)
+            self.message_queue.clear()
+        return messages
+
     # -- internal --
 
     def _send_raw(self, line: str) -> None:
-        if self._sock is None:
-            return
-        _debug(f">>> {line}")
-        self._sock.sendall((line + "\r\n").encode("utf-8", errors="replace"))
+        with self._send_lock:
+            sock = self._sock
+            if sock is None:
+                return
+            _debug(f">>> {line}")
+            sock.sendall((line + "\r\n").encode("utf-8", errors="replace"))
 
     def _reader_loop(self) -> None:
         while self._running:
             try:
-                data = self._sock.recv(4096)
+                sock = self._sock
+                if sock is None:
+                    break
+                data = sock.recv(4096)
             except OSError:
                 break
             if not data:
@@ -229,6 +243,7 @@ class IrcClient:
                     self._enqueue("SYSTEM", line)
 
     def _enqueue(self, tag: str, text: str) -> None:
-        self.message_queue.append((tag, text))
+        with self._queue_lock:
+            self.message_queue.append((tag, text))
         if self.on_message:
             self.on_message()

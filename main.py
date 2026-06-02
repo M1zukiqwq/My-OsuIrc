@@ -9,10 +9,11 @@ If not provided, nick and password will be prompted in the terminal.
 import argparse
 import curses
 import getpass
+import locale
 import re
 import sys
-import time
 import threading
+import time
 from collections import deque
 
 if sys.platform == "win32":
@@ -35,9 +36,10 @@ def main(stdscr: curses.window, nick: str, password: str):
     current_channel = ""
     joined_channels = []
     pending_mp_until = 0.0  # epoch; while > now we're waiting on a BanchoBot reply
+    wake_event = threading.Event()
 
     def on_new_message():
-        pass
+        wake_event.set()
 
     client.on_message = on_new_message
 
@@ -171,8 +173,7 @@ def main(stdscr: curses.window, nick: str, password: str):
     def drain_queue():
         nonlocal current_channel, pending_mp_until
         any_drained = False
-        while client.message_queue:
-            tag, text = client.message_queue.popleft()
+        for tag, text in client.drain_messages():
             ui.add_message(tag, text, redraw=False)
             any_drained = True
             # Mirror any BanchoBot PM into the user's current view.
@@ -197,20 +198,95 @@ def main(stdscr: curses.window, nick: str, password: str):
         if any_drained:
             ui._draw_messages()
 
-    # -- Windows input thread for IME/CJK support --
-    # curses.get_wch() on Windows (PDCurses) cannot receive IME-composed characters.
-    # We use a background thread with msvcrt.getwch() which works with IME.
-    input_queue: deque = deque()
+    input_queue: deque[str | int] = deque()
     input_lock = threading.Lock()
+    windows_key_map = {
+        "G": curses.KEY_HOME,
+        "H": curses.KEY_UP,
+        "O": curses.KEY_END,
+        "P": curses.KEY_DOWN,
+        "I": curses.KEY_PPAGE,
+        "Q": curses.KEY_NPAGE,
+        "S": curses.KEY_DC,
+    }
 
-    def _input_thread():
+    def _windows_input_thread() -> None:
         while client._running:
             ch = msvcrt.getwch()
+            if ch in ("\x00", "\xe0"):
+                mapped = windows_key_map.get(msvcrt.getwch())
+                if mapped is None:
+                    continue
+                ch = mapped
             with input_lock:
                 input_queue.append(ch)
+            wake_event.set()
 
-    t = threading.Thread(target=_input_thread, daemon=True)
-    t.start()
+    if sys.platform == "win32":
+        # curses.get_wch() on Windows (PDCurses) cannot receive IME-composed
+        # characters. msvcrt.getwch() does, so keep that path for CJK input.
+        t = threading.Thread(target=_windows_input_thread, daemon=True)
+        t.start()
+
+    def pending_input() -> list[str | int]:
+        if sys.platform == "win32":
+            with input_lock:
+                chars = list(input_queue)
+                input_queue.clear()
+            return chars
+
+        chars: list[str | int] = []
+        while True:
+            try:
+                ch = stdscr.get_wch()
+            except curses.error:
+                break
+            chars.append(ch)
+        return chars
+
+    def submit_input() -> None:
+        line = ui.input_buffer
+        ui.input_buffer = ""
+        ui._draw_messages()
+        handle_command(line)
+
+    def handle_key(ch: str | int) -> None:
+        if isinstance(ch, str):
+            if ch in ("\r", "\n"):
+                submit_input()
+            elif ch in ("\x7f", "\x08", "\b"):
+                if ui.input_buffer:
+                    ui.input_buffer = ui.input_buffer[:-1]
+                    ui._draw_messages()
+            elif sys.platform == "win32" and ch in ("\x00", "\xe0"):
+                # Function-key prefix emitted by msvcrt; the next wchar carries
+                # the key code and is intentionally ignored by this text input.
+                return
+            elif ch.isprintable():
+                ui.input_buffer += ch
+                ui._draw_messages()
+            return
+
+        if ch in (curses.KEY_ENTER,):
+            submit_input()
+        elif ch in (curses.KEY_BACKSPACE, curses.KEY_DC):
+            if ui.input_buffer:
+                ui.input_buffer = ui.input_buffer[:-1]
+                ui._draw_messages()
+        elif ch == curses.KEY_UP:
+            ui.scroll_up()
+        elif ch == curses.KEY_DOWN:
+            ui.scroll_down()
+        elif ch == curses.KEY_PPAGE:
+            ui.scroll_page_up()
+        elif ch == curses.KEY_NPAGE:
+            ui.scroll_page_down()
+        elif ch == curses.KEY_HOME:
+            ui.scroll_to_top()
+        elif ch == curses.KEY_END:
+            ui.scroll_to_bottom()
+        elif ch == curses.KEY_RESIZE:
+            ui._draw_messages()
 
     # Main loop: drain message queue + read input
     while client._running:
@@ -222,41 +298,39 @@ def main(stdscr: curses.window, nick: str, password: str):
             view_name += f"  [waiting BanchoBot {remaining:.0f}s — DO NOT QUIT]"
         ui.set_status(view_name, client.nick)
 
-        # Process all queued input characters
-        with input_lock:
-            chars = list(input_queue)
-            input_queue.clear()
-
-        for ch in chars:
-            if ch in ("\r", "\n"):
-                line = ui.input_buffer
-                ui.input_buffer = ""
-                ui._draw_messages()
-                handle_command(line)
-            elif ch in ("\x7f", "\x08", "\b"):
-                if len(ui.input_buffer) > 0:
-                    ui.input_buffer = ui.input_buffer[:-1]
-                    ui._draw_messages()
-            # \x00 or \xe0 = function key prefix on Windows; discard
-            elif ch in ("\x00", "\xe0"):
-                continue
-            elif ord(ch) >= 32:
-                ui.input_buffer += ch
-                ui._draw_messages()
+        for ch in pending_input():
+            handle_key(ch)
 
         drain_queue()
-        time.sleep(0.05)  # avoid busy-loop when no input
+        wake_event.wait(0.05)
+        wake_event.clear()
 
     drain_queue()
 
     ui.add_message("SYSTEM", "Press Enter to exit.")
-    while True:
-        ch = msvcrt.getwch()
-        if ch in ("\r", "\n"):
-            break
+    if sys.platform == "win32":
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                break
+    else:
+        stdscr.nodelay(False)
+        stdscr.timeout(-1)
+        while True:
+            try:
+                ch = stdscr.get_wch()
+            except curses.error:
+                break
+            if ch in ("\r", "\n", curses.KEY_ENTER):
+                break
 
 
 if __name__ == "__main__":
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error:
+        pass
+
     p = argparse.ArgumentParser(description="MyIrc — osu! Bancho IRC client")
     p.add_argument("--nick", default=None, help="Your osu! username")
     p.add_argument("--password", default=None, help="Your IRC server password")
