@@ -18,17 +18,38 @@
 
 ```
 MyIrc/
-├── irc.py          # IRC 协议层：连接、消息解析、命令发送
-├── referee.py        # AI 裁判核心状态、默认规则、命令生成
-├── referee_server.py # 本机 HTTP + SQLite 服务端
-├── referee_agent.py  # Bancho IRC 裁判 Agent
-├── referee_client.py # 人工裁判 CLI（调用服务端 API）
-├── referee_api.py    # 服务端 HTTP client
-├── referee_cli.py    # 旧单进程 supervisor（测试/兼容用）
-├── ai_referee.py     # OpenAI-compatible 规则抽取客户端
-├── ui.py           # curses TUI：消息区 + 状态栏 + 输入栏
-└── main.py         # 入口：server / agent / referee / chat
+├── main.py                         # 兼容入口：python main.py ...
+├── config.example.json             # 第三方 AI 模型配置模板
+├── my_osuirc/
+│   ├── app.py                      # CLI 参数解析和四种模式分发
+│   ├── ai/
+│   │   └── client.py               # OpenAI-compatible 规则抽取客户端
+│   ├── chat/
+│   │   └── ui.py                   # curses TUI：消息区、状态栏、输入栏
+│   ├── irc/
+│   │   └── client.py               # IRC 协议层：连接、解析、收发
+│   └── referee/
+│       ├── core.py                 # 裁判状态机、默认规则、dataclass 模型
+│       ├── server.py               # 本机 HTTP + SQLite 服务端
+│       ├── agent.py                # Bancho IRC 裁判 Agent
+│       ├── client.py               # 人工裁判 CLI（调用服务端 API）
+│       ├── api.py                  # 服务端 HTTP client
+│       └── legacy_cli.py           # 旧单进程 supervisor（测试/兼容用）
+└── tests/                          # 单元测试和集成式 fake IRC/server 测试
 ```
+
+### 架构分层
+
+| 层 | 目录 | 责任 |
+|----|------|------|
+| 入口层 | `main.py`, `my_osuirc/app.py` | 保持 `python main.py ...` 使用方式，并分发到 server / agent / referee / chat |
+| 通信层 | `my_osuirc/irc/`, `my_osuirc/referee/api.py` | IRC 协议和本机 HTTP API client |
+| 裁判核心 | `my_osuirc/referee/core.py` | 默认规则、状态机、session/rulepack 模型、低风险命令生成 |
+| 服务端 | `my_osuirc/referee/server.py` | SQLite 唯一事实源、HTTP API、排期和原子 claim |
+| 执行端 | `my_osuirc/referee/agent.py` | 轮询服务端，连接 Bancho，执行自动裁判动作 |
+| 人工端 | `my_osuirc/referee/client.py` | 创建规则/比赛、查看状态、人工接管和交回 AI |
+| AI 辅助 | `my_osuirc/ai/client.py` | 规则书/图池抽取；所有结果仍需人工确认 |
+| 测试 | `tests/` | 核心规则、UI/IRC、SQLite/API/Agent/CLI 流程验证 |
 
 ## 环境要求
 
@@ -185,6 +206,16 @@ AI 裁判只识别 BanchoBot / SYSTEM 等系统消息，以及玩家以 `!ref` �
 export AI_API_KEY=...
 export AI_BASE_URL=https://api.openai.com
 export AI_MODEL=gpt-4.1-mini
+```
+
+### 开发验证
+
+```bash
+python3 -m unittest -v
+python3 -m compileall -q main.py my_osuirc tests
+python3 main.py server --help
+python3 main.py agent --help
+python3 main.py referee --help
 ```
 
 ### TUI 内命令

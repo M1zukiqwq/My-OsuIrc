@@ -1,0 +1,1 @@
+"""My-OsuIrc package."""

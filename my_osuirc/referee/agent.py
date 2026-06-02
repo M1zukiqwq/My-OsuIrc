@@ -7,9 +7,9 @@ import uuid
 from dataclasses import asdict
 from typing import Any
 
-from irc import IrcClient
-from referee import MP_ROOM_RE, RefereeEngine, RefereeSession, session_from_dict
-from referee_api import RefereeApiClient, RefereeApiError
+from my_osuirc.irc.client import IrcClient
+from my_osuirc.referee.api import RefereeApiClient, RefereeApiError
+from my_osuirc.referee.core import MP_ROOM_RE, RefereeEngine, RefereeSession, session_from_dict
 
 
 class RefereeAgent:

@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from ai_referee import OpenAICompatibleClient
-from referee import (
+from my_osuirc.ai.client import OpenAICompatibleClient
+from my_osuirc.referee.core import (
     DEFAULT_ROOM_LEAD_TIME_SEC,
     RefereeEngine,
     RefereeSession,

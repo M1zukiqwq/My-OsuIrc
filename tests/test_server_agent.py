@@ -6,11 +6,11 @@ import time
 import unittest
 from pathlib import Path
 
-from referee import RulePack, rulepack_from_draft
-from referee_agent import RefereeAgent
-from referee_api import RefereeApiClient
-from referee_client import ServerRefereeCli
-from referee_server import RefereeHTTPServer, SQLiteRefereeStore, import_json_store
+from my_osuirc.referee.agent import RefereeAgent
+from my_osuirc.referee.api import RefereeApiClient
+from my_osuirc.referee.client import ServerRefereeCli
+from my_osuirc.referee.core import RefereeStore, RulePack, rulepack_from_draft
+from my_osuirc.referee.server import RefereeHTTPServer, SQLiteRefereeStore, import_json_store
 
 
 class FakeIrcClient:
@@ -171,7 +171,7 @@ class ServerCase(unittest.TestCase):
 
     def test_json_import(self) -> None:
         with tempfile.TemporaryDirectory() as source, tempfile.TemporaryDirectory() as dest:
-            json_store = __import__("referee").RefereeStore(source)
+            json_store = RefereeStore(source)
             rulepack = RulePack(id="imported", name="Imported", confirmed=True)
             json_store.save_rulepack(rulepack)
             default_pack = json_store.ensure_default_rulepack()
@@ -188,7 +188,7 @@ class ServerCase(unittest.TestCase):
         for mode in ("server", "agent", "referee"):
             result = subprocess.run(
                 [sys.executable, "main.py", mode, "--help"],
-                cwd=Path(__file__).parent,
+                cwd=Path(__file__).resolve().parents[1],
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

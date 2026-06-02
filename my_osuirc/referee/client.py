@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from referee import DEFAULT_ROOM_LEAD_TIME_SEC, parse_menu_command
-from referee_api import RefereeApiClient, RefereeApiError
+from my_osuirc.referee.api import RefereeApiClient, RefereeApiError
+from my_osuirc.referee.core import DEFAULT_ROOM_LEAD_TIME_SEC, parse_menu_command
 
 
 InputFunc = Callable[[str], str]

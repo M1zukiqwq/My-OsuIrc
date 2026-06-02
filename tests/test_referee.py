@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from ai_referee import OpenAICompatibleClient, load_ai_config
-from referee import (
+from my_osuirc.ai.client import OpenAICompatibleClient, load_ai_config
+from my_osuirc.referee.core import (
     RefereeEngine,
     RefereeStore,
     SessionState,
@@ -14,7 +14,7 @@ from referee import (
     parse_menu_command,
     rulepack_from_draft,
 )
-from referee_cli import RefereeSupervisor
+from my_osuirc.referee.legacy_cli import RefereeSupervisor
 
 
 class FakeClient:
@@ -94,7 +94,7 @@ class RefereeRulesTest(unittest.TestCase):
                 '{"ai":{"base_url":"https://vendor.test","api_key":"secret","model":"vendor-model"}}',
                 encoding="utf-8",
             )
-            with patch("ai_referee.DEFAULT_CONFIG_PATH", path):
+            with patch("my_osuirc.ai.client.DEFAULT_CONFIG_PATH", path):
                 client = OpenAICompatibleClient.from_env()
 
         self.assertIsNotNone(client)

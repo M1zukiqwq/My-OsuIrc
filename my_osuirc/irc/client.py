@@ -3,11 +3,11 @@
 import socket
 import threading
 from collections import deque
+from pathlib import Path
 from typing import Callable
 
 # DEBUG: append raw IRC traffic to debug.log (keep history across runs)
-import os
-_debug_log = open(os.path.join(os.path.dirname(__file__), "debug.log"), "a", encoding="utf-8")
+_debug_log = open(Path.cwd() / "debug.log", "a", encoding="utf-8")
 _debug_log.write("\n===== new session =====\n")
 
 def _debug(msg: str):

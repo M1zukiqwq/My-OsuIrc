@@ -8,9 +8,9 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from ai_referee import OpenAICompatibleClient
-from irc import IrcClient
-from referee import (
+from my_osuirc.ai.client import OpenAICompatibleClient
+from my_osuirc.irc.client import IrcClient
+from my_osuirc.referee.core import (
     MP_ROOM_RE,
     RefereeEngine,
     RefereeSession,

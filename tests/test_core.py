@@ -1,7 +1,7 @@
 import unittest
 
-from irc import IrcClient, parse_irc_message
-from ui import ChatUI, _display_width, _sanitize_display_text, _truncate_to_width, _wrap_to_width
+from my_osuirc.chat.ui import ChatUI, _display_width, _sanitize_display_text, _truncate_to_width, _wrap_to_width
+from my_osuirc.irc.client import IrcClient, parse_irc_message
 
 
 class FakeScreen:
