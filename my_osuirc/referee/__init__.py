@@ -1,1 +1,0 @@
-"""AI osu! referee system."""

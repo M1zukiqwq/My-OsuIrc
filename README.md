@@ -211,7 +211,7 @@ export AI_MODEL=gpt-4.1-mini
 ### 开发验证
 
 ```bash
-python3 -m unittest -v
+python3 -m unittest discover -s tests -v
 python3 -m compileall -q main.py my_osuirc tests
 python3 main.py server --help
 python3 main.py agent --help
