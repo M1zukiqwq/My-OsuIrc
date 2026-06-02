@@ -1,0 +1,10 @@
+{
+  "ai": {
+    "base_url": "https://api.openai.com",
+    "api_key": "",
+    "model": "gpt-4.1-mini",
+    "thinking": {
+      "type": "disabled"
+    }
+  }
+}

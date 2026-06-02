@@ -1,9 +1,12 @@
-"""MyIrc — a minimal IRC client for osu! Bancho (irc.ppy.sh).
+"""MyIrc — osu! Bancho IRC client and AI referee system.
 
 Usage:
-    python main.py [--nick NICK] [--password PASS]
+    python main.py server --host 127.0.0.1 --port 8765
+    python main.py agent --nick NICK --password PASS --server-url http://127.0.0.1:8765
+    python main.py referee --server-url http://127.0.0.1:8765
+    python main.py chat --nick NICK --password PASS
 
-If not provided, nick and password will be prompted in the terminal.
+If not provided, nick and password will be prompted in the terminal for IRC modes.
 """
 
 import argparse
@@ -20,6 +23,10 @@ if sys.platform == "win32":
     import msvcrt
 
 from irc import IrcClient
+from referee_agent import RefereeAgent
+from referee_api import RefereeApiClient
+from referee_client import ServerRefereeCli
+from referee_server import SQLiteRefereeStore, import_json_store, run_server
 from ui import ChatUI
 
 SERVER = "irc.ppy.sh"
@@ -28,7 +35,7 @@ PORT = 6667
 MP_ROOM_RE = re.compile(r"https://osu\.ppy\.sh/mp/(\d+)")
 
 
-def main(stdscr: curses.window, nick: str, password: str):
+def chat_main(stdscr: curses.window, nick: str, password: str):
     client = IrcClient(nick=nick, password=password, server=SERVER, port=PORT)
 
     ui = ChatUI(stdscr)
@@ -325,17 +332,7 @@ def main(stdscr: curses.window, nick: str, password: str):
                 break
 
 
-if __name__ == "__main__":
-    try:
-        locale.setlocale(locale.LC_ALL, "")
-    except locale.Error:
-        pass
-
-    p = argparse.ArgumentParser(description="MyIrc — osu! Bancho IRC client")
-    p.add_argument("--nick", default=None, help="Your osu! username")
-    p.add_argument("--password", default=None, help="Your IRC server password")
-    args = p.parse_args()
-
+def prompt_credentials(args: argparse.Namespace) -> tuple[str, str]:
     nick = args.nick
     password = args.password
 
@@ -347,11 +344,113 @@ if __name__ == "__main__":
     if not nick or not password:
         print("Username and password are required.")
         sys.exit(1)
+    return nick, password
 
+
+def run_chat_tui(nick: str, password: str) -> None:
     try:
-        curses.wrapper(lambda stdscr: main(stdscr, nick, password))
+        curses.wrapper(lambda stdscr: chat_main(stdscr, nick, password))
     except KeyboardInterrupt:
         pass
     except Exception as e:
         print(f"\nError: {e}")
         input("Press Enter to exit...")
+
+
+def run_agent(nick: str, password: str, server_url: str) -> None:
+    client = IrcClient(nick=nick, password=password, server=SERVER, port=PORT)
+    print(f"Connecting to {SERVER}:{PORT} ...")
+    try:
+        client.connect()
+    except Exception as e:
+        print(f"Connection failed: {e}")
+        return
+    print(f"Connected as {nick}.")
+    agent = RefereeAgent(client, RefereeApiClient(server_url))
+    try:
+        agent.run()
+    except KeyboardInterrupt:
+        client.disconnect()
+
+
+def run_server_referee_cli(server_url: str) -> None:
+    cli = ServerRefereeCli(RefereeApiClient(server_url))
+    cli.run()
+
+
+def run_import_json(root: str, db_path: str) -> None:
+    store = SQLiteRefereeStore(db_path)
+    try:
+        counts = import_json_store(root, store)
+    finally:
+        store.close()
+    print(
+        "Imported "
+        f"{counts['rulepacks']} rulepacks, {counts['sessions']} sessions, {counts['events']} events "
+        f"into {db_path}."
+    )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="MyIrc — osu! AI referee and Bancho IRC client")
+    subparsers = p.add_subparsers(dest="mode")
+
+    server = subparsers.add_parser("server", help="run local HTTP + SQLite referee server")
+    server.add_argument("--host", default="127.0.0.1", help="bind host")
+    server.add_argument("--port", type=int, default=8765, help="bind port")
+    server.add_argument("--db", default="referee.db", help="SQLite database path")
+    server.add_argument("--import-json", default="", help="import existing rulepacks/sessions/logs before serving")
+
+    agent = subparsers.add_parser("agent", help="run Bancho IRC referee agent")
+    agent.add_argument("--nick", default=None, help="Your osu! username")
+    agent.add_argument("--password", default=None, help="Your IRC server password")
+    agent.add_argument("--server-url", default="http://127.0.0.1:8765", help="local referee server URL")
+
+    referee = subparsers.add_parser("referee", help="run human referee CLI")
+    referee.add_argument("--server-url", default="http://127.0.0.1:8765", help="local referee server URL")
+
+    chat = subparsers.add_parser("chat", help="run legacy curses IRC chat client")
+    chat.add_argument("--nick", default=None, help="Your osu! username")
+    chat.add_argument("--password", default=None, help="Your IRC server password")
+
+    importer = subparsers.add_parser("import-json", help="one-time import from JSON dirs into SQLite")
+    importer.add_argument("--root", default=".", help="directory containing rulepacks/, sessions/, logs/")
+    importer.add_argument("--db", default="referee.db", help="SQLite database path")
+
+    p.set_defaults(mode="referee", server_url="http://127.0.0.1:8765")
+    return p
+
+
+def main() -> None:
+    try:
+        locale.setlocale(locale.LC_ALL, "")
+    except locale.Error:
+        pass
+
+    args = build_parser().parse_args()
+    if args.mode == "server":
+        if args.import_json:
+            store = SQLiteRefereeStore(args.db)
+            try:
+                counts = import_json_store(args.import_json, store)
+            finally:
+                store.close()
+            print(
+                "Imported "
+                f"{counts['rulepacks']} rulepacks, {counts['sessions']} sessions, {counts['events']} events."
+            )
+        run_server(args.host, args.port, args.db)
+    elif args.mode == "agent":
+        nick, password = prompt_credentials(args)
+        run_agent(nick, password, args.server_url)
+    elif args.mode == "chat":
+        nick, password = prompt_credentials(args)
+        run_chat_tui(nick, password)
+    elif args.mode == "import-json":
+        run_import_json(args.root, args.db)
+    else:
+        run_server_referee_cli(args.server_url)
+
+
+if __name__ == "__main__":
+    main()

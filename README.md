@@ -1,6 +1,6 @@
 # My-OsuIrc
 
-一个连接 osu! Bancho (`irc.ppy.sh`) 的极简 IRC 终端客户端，使用 Python 标准库实现，无第三方依赖。
+一个连接 osu! Bancho (`irc.ppy.sh`) 的终端工具。现在拆成三端：本机服务端、Bancho 裁判 Agent、人工裁判 CLI；同时保留原来的 curses IRC 聊天模式。
 
 ## 功能
 
@@ -9,22 +9,31 @@
 - 加入/离开频道
 - 收发消息、私聊
 - 自动 PING/PONG 保活
-- 终端 TUI 界面（curses）
+- 本机 HTTP + SQLite 服务端：规则模板、比赛排期、session 状态、事件日志的唯一事实源
+- Bancho 裁判 Agent：轮询服务端，到点自动建房、邀请、timer、settings、start
+- 人工裁判 CLI：创建配置、排期、查看状态、人工接管/交回 AI
+- 终端 TUI 聊天界面（curses，`chat` 模式）
 
 ## 项目结构
 
 ```
 MyIrc/
-├── irc.py     # IRC 协议层：连接、消息解析、命令发送
-├── ui.py      # curses TUI：消息区 + 状态栏 + 输入栏
-├── main.py    # 入口：参数解析、事件循环、命令路由
-└── start.bat  # Windows 快捷启动脚本
+├── irc.py          # IRC 协议层：连接、消息解析、命令发送
+├── referee.py        # AI 裁判核心状态、默认规则、命令生成
+├── referee_server.py # 本机 HTTP + SQLite 服务端
+├── referee_agent.py  # Bancho IRC 裁判 Agent
+├── referee_client.py # 人工裁判 CLI（调用服务端 API）
+├── referee_api.py    # 服务端 HTTP client
+├── referee_cli.py    # 旧单进程 supervisor（测试/兼容用）
+├── ai_referee.py     # OpenAI-compatible 规则抽取客户端
+├── ui.py           # curses TUI：消息区 + 状态栏 + 输入栏
+└── main.py         # 入口：server / agent / referee / chat
 ```
 
 ## 环境要求
 
 - Python 3.10+
-- 无第三方依赖（仅使用标准库 `socket`, `threading`, `curses`, `getpass`）
+- 无第三方依赖（SQLite、HTTP、IRC、curses 均使用 Python 标准库）
 
 ### Mac / Linux
 
@@ -83,14 +92,100 @@ python -c "import curses; print('OK')"
 ## 使用方法
 
 ```bash
-# 交互式输入用户名密码
-python main.py
+# 1. 启动本机服务端（默认 127.0.0.1:8765，数据库 referee.db）
+python main.py server --host 127.0.0.1 --port 8765
 
-# 或直接传参
-python main.py --nick YourOsuName --password YourIrcPassword
+# 2. 启动 Bancho 裁判 Agent
+python main.py agent --nick YourOsuName --password YourIrcPassword --server-url http://127.0.0.1:8765
+
+# 3. 启动人工裁判 CLI
+python main.py referee --server-url http://127.0.0.1:8765
+
+# 旧 IRC/TUI 聊天模式
+python main.py chat --nick YourOsuName --password YourIrcPassword
+
+# 一次性把旧 JSON 目录导入 SQLite
+python main.py import-json --root . --db referee.db
 ```
 
 IRC 密码获取：登录 [osu!](https://osu.ppy.sh) → Settings → IRC 密码
+
+### 开比赛流程
+
+| 步骤 | 入口 | 操作 |
+|------|------|------|
+| 1 | `server` | 先启动 `python main.py server`，它保存规则、比赛、状态和日志 |
+| 2 | `agent` | 启动 `python main.py agent ...`，Agent 会轮询服务端并等待可领取比赛 |
+| 3 | `referee` | 用 `add-config` 添加规则模板；规则草案必须人工确认 |
+| 4 | `referee` | 用 `new` 创建比赛，填写规则模板、队伍、队员、比赛时间 |
+| 5 | `server/agent` | 默认比赛前 10 分钟，Agent 自动领取 session 并开 mp 房 |
+| 6 | `agent` | Agent 自动执行 `!mp make`、`!mp invite`、上人 timer、BP timer |
+| 7 | 房间内 | 玩家 `!ref ready` 只触发 `!mp settings`；系统 all-ready 或上人 timer 到期后 `!mp start 7` |
+| 8 | `referee` | 需要人工介入时 `#join <session_id|#mp_room>`；输入 `/ai` 或 `/leave` 交回 AI |
+
+### 人工裁判 CLI 命令
+
+| 命令 | 说明 |
+|------|------|
+| `list` | 列出服务端中的 scheduled / active / paused / human_controlled / finished session |
+| `#join <session_id|#mp_room>` | 人工接管某场比赛；该 session 的 Agent 自动动作暂停 |
+| `new` | 基于已有规则模板创建新的小比赛 |
+| `add-config` | 添加新规则模板，支持 AI 从规则书/图池链接抽取 |
+| `resume <session_id>` | 恢复 AI 接管 |
+| `state <session_id>` | 查看比赛状态、比分、频道、Agent 分配 |
+| `quit` | 退出人工 CLI，不会关闭服务端或 Agent |
+
+### HTTP API
+
+服务端默认监听 `http://127.0.0.1:8765`：
+
+- `GET /api/health`
+- `GET /api/rulepacks`
+- `POST /api/rulepacks/draft`
+- `POST /api/rulepacks/{id}/confirm`
+- `GET /api/sessions`
+- `POST /api/sessions`
+- `GET /api/sessions/{id}`
+- `POST /api/sessions/{id}/control`
+- `POST /api/sessions/{id}/events`
+- `POST /api/agent/heartbeat`
+- `POST /api/agent/claim`
+- `GET /api/agent/{agent_id}/tasks`
+
+如果规则书未导入或缺少字段，会使用默认规则：
+
+- BP timer：90 秒
+- 上人/入房 timer：120 秒
+- 玩家发送 `!ref ready` 后，AI 只会执行 `!mp settings` 检查房间配置
+- BanchoBot / SYSTEM 消息确认所有玩家已 ready 后：`!mp start 7`
+- 上人 timer 结束且没有玩家发送 `!ref pause` 后：`!mp start 7`
+
+AI 裁判只识别 BanchoBot / SYSTEM 等系统消息，以及玩家以 `!ref` 开头的命令；普通玩家聊天不会触发 AI 判断或自动回复。
+
+第三方 AI 模型配置放在 `config.json`：
+
+```json
+{
+  "ai": {
+    "base_url": "https://api.openai.com",
+    "api_key": "YOUR_API_KEY",
+    "model": "gpt-4.1-mini",
+    "thinking": {
+      "type": "disabled"
+    }
+  }
+}
+```
+
+仓库内提供了 `config.example.json` 模板；真实 `config.json` 已加入 `.gitignore`，避免提交 API key。
+
+也可以用环境变量覆盖配置文件：
+
+```bash
+export AI_API_KEY=...
+export AI_BASE_URL=https://api.openai.com
+export AI_MODEL=gpt-4.1-mini
+```
 
 ### TUI 内命令
 
