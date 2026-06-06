@@ -123,8 +123,28 @@ python main.py agent \
 
 - `--red` / `--blue`：写 `队名=选手1,选手2`，1v1 直接写选手名；省略则交互式提示。
 - `--best-of`：每场各自指定（BO9/BO11/BO13），规则书里不含 best-of；省略则提示输入。
-- `--rulebook`：图池/规则的 JSON（mappool + format）。
-- 其它模式：`python main.py chat ...`（curses 聊天）、`python main.py server ...`（可选服务端）、`python main.py import-json ...`（旧 JSON 导入 SQLite）。
+- `--rulebook`：图池/规则的 JSON（mappool + format）。没有现成 JSON？用 `import-rulebook` 让 AI 从原始规则书/图池生成（见下）。
+- 其它模式：`python main.py import-rulebook ...`（AI 解析规则书）、`python main.py chat ...`（curses 聊天）、`python main.py server ...`（可选服务端）、`python main.py import-json ...`（旧 JSON 导入）、`python main.py --origin ...`（原始全手动模式）。
+
+### 导入规则书/图池（AI 解析，格式随便）
+
+把人写的规则书 + 图池（**任意格式**：md / txt / TSV / 复制粘贴都行）交给 AI 解析成引擎能懂的结构化 JSON，人工确认后保存：
+
+```bash
+python main.py import-rulebook --rules rule.txt --mappool mappool.txt --name "o!TA:N S1" --out my-rulebook.json
+```
+
+AI 会抽出 `mappool`（每张图的 `code`/`beatmap_id`/`mods`/`map_command`/`mod_command`）和 `format`（`team_mode`/`win_condition`/`bp_order`）以及计时字段；屏幕打印结果让你确认（`-y` 跳过确认）。确认后存成 JSON，直接 `agent --rulebook my-rulebook.json` 用。需要配 AI key（见 `config.json` 段）。
+
+### 原始全手动模式（`--origin`）
+
+不想要任何自动化、像最初那样自己登录、自己 `!mp make`、自己一条条敲指令裁判：
+
+```bash
+python main.py --origin --nick YourName --password YourIrcPassword
+```
+
+这就是 curses IRC 客户端（等同 `chat` 模式）：`/join #channel`、直接打字发言、手动 `!mp ...`。
 
 IRC 密码获取：登录 [osu!](https://osu.ppy.sh) → Settings → Legacy IRC。
 
@@ -189,8 +209,8 @@ AI 裁判只识别 BanchoBot / SYSTEM 等系统消息，以及玩家以 `!ref` �
 - 任一队先到 `first_to`（默认 `best_of // 2 + 1`，BO11 即 6）时，播报 `... wins! GGWP` 并自动 `!mp close`。
 - 不在 `mappool` 的图（例如警身图）不计分；同分图不计分、提示重赛。
 
-**规则书/图池是人写的纯文本（Markdown 或 TSV），由 AI 解析成结构化 rulepack**：
-`OpenAICompatibleClient.extract_rulepack` 把规则书文本抽成 `mappool`（每条含 `code` / `beatmap_id` / `mods` / `map_command` / `mod_command`）和 `format`，
+**规则书/图池是人写的纯文本（任意格式），由 AI 解析成结构化 rulepack**——用 `python main.py import-rulebook --rules ... --mappool ...`：
+`OpenAICompatibleClient.extract_rulepack` 把文本抽成 `mappool`（每条含 `code` / `beatmap_id` / `mods` / `map_command` / `mod_command`）和 `format`（`team_mode`/`win_condition`/`bp_order`），
 人工确认后保存为 JSON，`agent --rulebook` 直接加载（AI 抽取结果必须人工确认）。
 
 `docs/rulebook-121270745.md` 是一份人类可读的示例规则书（含 Markdown 图池表）；

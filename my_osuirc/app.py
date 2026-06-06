@@ -1,10 +1,11 @@
 """MyIrc — osu! Bancho IRC client and AI referee system.
 
 Usage:
+    python main.py agent --nick NICK --password PASS --rulebook RB.json --best-of 11
+    python main.py import-rulebook --rules rule.txt --mappool mappool.txt --out RB.json
     python main.py server --host 127.0.0.1 --port 8765
-    python main.py agent --nick NICK --password PASS --server-url http://127.0.0.1:8765
-    python main.py referee --server-url http://127.0.0.1:8765
     python main.py chat --nick NICK --password PASS
+    python main.py --origin --nick NICK --password PASS   # 原始全手动模式
 
 If not provided, nick and password will be prompted in the terminal for IRC modes.
 """
@@ -28,7 +29,7 @@ from my_osuirc.ai.client import OpenAICompatibleClient
 from my_osuirc.chat.ui import ChatUI
 from my_osuirc.irc.client import IrcClient
 from my_osuirc.referee.agent import RefereeAgent
-from my_osuirc.referee.assistant import RefereeAssistant
+from my_osuirc.referee.assistant import RefereeAssistant, extract_rulebook
 from my_osuirc.referee.core import (
     RefereeSession,
     SessionConfig,
@@ -36,6 +37,7 @@ from my_osuirc.referee.core import (
     Team,
     new_id,
     rulepack_from_draft,
+    slugify,
 )
 from my_osuirc.referee.server import SQLiteRefereeStore, import_json_store, run_server
 
@@ -459,6 +461,64 @@ def run_agent(
     client.disconnect()
 
 
+def run_import_rulebook(
+    rules: str | None,
+    mappool: str | None,
+    name: str,
+    out: str | None,
+    assume_yes: bool = False,
+    client=None,
+    input_func=input,
+    output_func=print,
+) -> str | None:
+    """Feed raw rulebook/mappool text (any format) → AI parses it into a structured
+    rulepack JSON the engine + AI understand → human confirms → save for --rulebook."""
+    rules_text = Path(rules).read_text(encoding="utf-8", errors="replace") if rules and Path(rules).exists() else ""
+    mappool_text = (
+        Path(mappool).read_text(encoding="utf-8", errors="replace") if mappool and Path(mappool).exists() else ""
+    )
+    if rules and not rules_text:
+        output_func(f"Rules file not found: {rules}")
+        return None
+    if mappool and not mappool_text:
+        output_func(f"Mappool file not found: {mappool}")
+        return None
+    if not rules_text and not mappool_text:
+        output_func("请用 --rules 和/或 --mappool 指定规则书/图池文件（任意格式）。")
+        return None
+
+    client = client or OpenAICompatibleClient.from_env()
+    if client is None:
+        output_func("需要配置 AI（config.json 或 AI_API_KEY）才能解析规则书；见 README 的 config.json 段。")
+        return None
+
+    output_func("AI 正在把规则书/图池解析成结构化格式...")
+    try:
+        data = extract_rulebook(client, name=name, rules_text=rules_text, mappool_text=mappool_text)
+    except Exception as exc:
+        output_func(f"解析失败：{exc}")
+        return None
+
+    mappool_list = data.get("mappool") or []
+    fmt = data.get("format") or {}
+    output_func(f"解析结果：{len(mappool_list)} 张图 | bp_order={fmt.get('bp_order')} | "
+                f"{fmt.get('team_mode')}/{fmt.get('win_condition')}")
+    for entry in mappool_list:
+        output_func(f"  {entry.get('code')}: {entry.get('map_command')}  {entry.get('mod_command')}")
+
+    if not assume_yes:
+        answer = input_func("确认无误并保存？[y/N]: ").strip().lower()
+        if answer != "y":
+            output_func("已取消，未保存。")
+            return None
+
+    data["confirmed"] = True
+    out = out or f"rulebook-{slugify(name)}.json"
+    Path(out).write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    output_func(f"已保存 {out}。开赛：python main.py agent --nick ... --password ... --rulebook {out} --best-of 11")
+    return out
+
+
 def run_import_json(root: str, db_path: str) -> None:
     store = SQLiteRefereeStore(db_path)
     try:
@@ -474,6 +534,12 @@ def run_import_json(root: str, db_path: str) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="MyIrc — osu! AI referee and Bancho IRC client")
+    # Original (main-branch) fully-manual mode: log in and drive the room yourself
+    # with the curses IRC client — no automation. `python main.py --origin ...`
+    p.add_argument("--origin", action="store_true", help="原始手动模式：登录后用 curses 客户端自己开房、自己裁（无任何自动化）")
+    p.add_argument("--nick", default=None, help="osu! username (for --origin)")
+    p.add_argument("--password", default=None, help="IRC password (for --origin)")
+    p.add_argument("--chat-log-dir", default="logs/chat", help="per-room chat log dir (for --origin; empty to disable)")
     subparsers = p.add_subparsers(dest="mode")
 
     server = subparsers.add_parser("server", help="run local HTTP + SQLite referee server")
@@ -497,6 +563,13 @@ def build_parser() -> argparse.ArgumentParser:
     chat.add_argument("--password", default=None, help="Your IRC server password")
     chat.add_argument("--chat-log-dir", default="logs/chat", help="per-room chat log dir (empty to disable)")
 
+    rb = subparsers.add_parser("import-rulebook", help="AI-parse a raw rulebook/mappool (any format) into a --rulebook JSON")
+    rb.add_argument("--rules", default=None, help="rules text file (any format; e.g. rule.txt)")
+    rb.add_argument("--mappool", default=None, help="mappool text file (any format; e.g. mappool.txt)")
+    rb.add_argument("--name", default="Imported Rulebook", help="rulepack name")
+    rb.add_argument("--out", default=None, help="output JSON path (default rulebook-<name>.json)")
+    rb.add_argument("-y", "--yes", action="store_true", help="skip the confirm prompt")
+
     importer = subparsers.add_parser("import-json", help="one-time import from JSON dirs into SQLite")
     importer.add_argument("--root", default=".", help="directory containing rulepacks/, sessions/, logs/")
     importer.add_argument("--db", default="referee.db", help="SQLite database path")
@@ -511,6 +584,10 @@ def main() -> None:
         pass
 
     args = build_parser().parse_args()
+    if getattr(args, "origin", False):
+        nick, password = prompt_credentials(args)
+        run_chat_tui(nick, password, args.chat_log_dir or None)
+        return
     if args.mode == "server":
         if args.import_json:
             store = SQLiteRefereeStore(args.db)
@@ -538,6 +615,8 @@ def main() -> None:
     elif args.mode == "chat":
         nick, password = prompt_credentials(args)
         run_chat_tui(nick, password, args.chat_log_dir or None)
+    elif args.mode == "import-rulebook":
+        run_import_rulebook(args.rules, args.mappool, args.name, args.out, assume_yes=args.yes)
     elif args.mode == "import-json":
         run_import_json(args.root, args.db)
     else:

@@ -11,6 +11,15 @@
 - 参赛选手的 **准确 osu! 用户名**（机器人按名字 `!mp invite`）。
 - 规则书/图池已经在仓库里：`docs/sample-rulebook-otan-s1.json`
   （= `mappool.txt` 的 18 张图 + `rule.txt` 的赛制参数 + `bp_order`）。
+- 想用**自己的**规则书/图池：用 `import-rulebook` 让 AI 把任意格式的文本解析成这种 JSON（见下面「导入自己的规则书」）。
+
+### 导入自己的规则书（可选，AI 解析）
+
+```bash
+python main.py import-rulebook --rules rule.txt --mappool mappool.txt --name "我的杯赛" --out my-rulebook.json
+```
+
+规则书/图池**格式随便**（md/txt/TSV/粘贴）。AI 解析出 `mappool` + `format`（含 `bp_order`、`team_mode`、`win_condition`）和计时，屏幕打印让你确认（`-y` 跳过），存成 `my-rulebook.json`，之后 `agent --rulebook my-rulebook.json`。需要配 AI key。
 
 ## 1. 一条命令开一场（一个进程 = 一个房间）
 

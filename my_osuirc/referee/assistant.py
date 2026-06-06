@@ -10,9 +10,11 @@ configured it degrades gracefully (callers fall back to a deterministic status).
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from typing import Any
 
 from my_osuirc.ai.client import extract_json_object
+from my_osuirc.referee.core import rulepack_from_draft
 
 ANSWER_SYSTEM = (
     "你是 osu! 比赛房间里的 AI 裁判助理。依据给定的【当前状态】【规则书】和【房间历史记录】回答选手问题，"
@@ -91,3 +93,15 @@ class RefereeAssistant:
             return self.ai.chat(prompt, system=SUMMARY_SYSTEM).strip()
         except Exception:
             return ""
+
+
+def extract_rulebook(client: Any, name: str, rules_text: str = "", mappool_text: str = "") -> dict[str, Any]:
+    """Let the AI turn raw rulebook/mappool text (any format) into a structured
+    rulepack dict the engine + AI understand. Returns the unconfirmed rulepack
+    as a plain dict (asdict). Raises if the client is missing or extraction fails.
+    """
+    if client is None:
+        raise RuntimeError("no AI client configured")
+    draft = client.extract_rulepack(name=name, rules_text=rules_text, mappool_text=mappool_text)
+    pack = rulepack_from_draft(name=name, draft=draft, confirmed=False)
+    return asdict(pack)

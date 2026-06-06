@@ -8,7 +8,7 @@ graceful fallback, and that the agent routes !ref ? / !ref ask correctly.
 import unittest
 
 from my_osuirc.referee.agent import RefereeAgent
-from my_osuirc.referee.assistant import RefereeAssistant
+from my_osuirc.referee.assistant import RefereeAssistant, extract_rulebook
 from my_osuirc.referee.core import (
     RefereeEngine,
     RefereeSession,
@@ -21,6 +21,7 @@ from my_osuirc.referee.core import (
     classify_ref_message,
     format_status,
     mappool_status,
+    rulepack_from_draft,
 )
 
 CHANNEL = "#mp_1"
@@ -279,6 +280,59 @@ class ControllerTest(unittest.TestCase):
         agent._maybe_assist(session, "<Alice> !ref 对面掉线了")
         self.assertEqual(len(irc.sent), 1)
         self.assertIn("阶段", irc.sent[0][1])
+
+
+class StubExtractor:
+    """Stands in for OpenAICompatibleClient: records input, returns a fixed draft."""
+
+    def __init__(self) -> None:
+        self.seen: dict = {}
+
+    def extract_rulepack(self, name, rules_text="", mappool_text="", **_):
+        self.seen = {"name": name, "rules": rules_text, "mappool": mappool_text}
+        return {
+            "format": {"team_mode": "TeamVs", "win_condition": "ScoreV2", "bp_order": ["pick", "ban"]},
+            "mappool": [
+                {"code": "NM1", "beatmap_id": 101, "mods": "NF",
+                 "map_command": "!mp map 101 0", "mod_command": "!mp mods NF"},
+            ],
+        }
+
+
+class ImportRulebookTest(unittest.TestCase):
+    def test_extract_rulebook_returns_engine_ready_dict(self) -> None:
+        client = StubExtractor()
+        data = extract_rulebook(client, name="Cup", rules_text="不能 ban TB", mappool_text="NM1\t...")
+        self.assertEqual(client.seen["rules"], "不能 ban TB")        # raw text handed to the AI
+        self.assertFalse(data["confirmed"])                          # not yet confirmed
+        pack = rulepack_from_draft(name="Cup", draft=data)           # loads straight back
+        self.assertEqual(pack.format["bp_order"], ["pick", "ban"])
+        self.assertEqual(pack.mappool[0]["map_command"], "!mp map 101 0")
+
+    def test_requires_client(self) -> None:
+        with self.assertRaises(RuntimeError):
+            extract_rulebook(None, name="X", mappool_text="NM1")
+
+    def test_run_import_rulebook_writes_loadable_json(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from my_osuirc.app import run_import_rulebook
+
+        with tempfile.TemporaryDirectory() as temp:
+            mappool = Path(temp, "mappool.txt")
+            mappool.write_text("NM1\tsong\t!mp map 101 0\t!mp mods NF\n", encoding="utf-8")
+            out = Path(temp, "rb.json")
+            result = run_import_rulebook(
+                rules=None, mappool=str(mappool), name="Cup", out=str(out),
+                assume_yes=True, client=StubExtractor(), output_func=lambda *_: None,
+            )
+            self.assertEqual(result, str(out))
+            saved = json.loads(out.read_text(encoding="utf-8"))
+            self.assertTrue(saved["confirmed"])
+            pack = rulepack_from_draft(name="Cup", draft=saved)
+            self.assertEqual(pack.format["bp_order"], ["pick", "ban"])
 
 
 class ConsoleTest(unittest.TestCase):
