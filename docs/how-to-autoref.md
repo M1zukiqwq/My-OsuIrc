@@ -133,6 +133,18 @@ Connected as <bot>. Match: Alice vs Bob (BO11). AI assistant: on.
 
 核心：**pick/ban 先查共享图池表——没错走引擎，有错才转 AI**。所以 `!ref pick nm1`（合法）一定走引擎；`!ref ban 一张不存在/已ban的图` 才会交给 AI 去解释处理。
 注意：图池层之外的不合法（**没轮到你**、TB 未解锁等）仍由引擎按规则**静默忽略**；想知道原因用 `!ref ?` 或 `!ref <问题>`。
+
+**引擎识别的 BanchoBot 消息（白名单，`core.banchobot_relevant`）**：只认这 5 类，其余（进/离房、换 slot、`Countdown ends`、`!mp settings` 那一坨、glhf…）一律在入口丢弃：
+
+| BanchoBot 消息 | 用途 |
+|------|------|
+| `Created the tournament match …/mp/<id>` | 建房回执 → 绑定频道 |
+| `<player> rolls N point(s)` | roll 点（**仅 roll 点环节** `roll_phase` 为真时才认；环节外的 roll 忽略） |
+| `<player> finished playing (Score: N, …)` | 累计本图分数 |
+| `The match has finished` | 结算本图、判胜 |
+| `All players are ready` | 触发开赛检查 |
+
+要增减引擎认的 BanchoBot 消息，改 `banchobot_relevant` 一处即可。
 - **开启**：需在 `config.json` 配 AI（见主 README 的 `config.json` 段）或设 `AI_API_KEY` 环境变量。
   规则书原文默认读 `rule.txt`，可用 `--rules-file <路径>` 指定。没配 key 时 `!ref ?` 仍可用，`!ref ask` 回落到状态行。
 - 所有 AI 调用在**后台线程**进行，不会卡住裁判主循环；调用失败只记日志、不影响比赛。

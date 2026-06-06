@@ -130,6 +130,7 @@ class SessionState:
     bp_step: int = 0
     pick_count: int = 0
     ban_count: int = 0
+    roll_phase: bool = False  # only while True does the engine recognise roll messages
     turn_deadline: float = 0.0
     pause_counts: dict[str, int] = field(default_factory=dict)
     paused_this_map: list[str] = field(default_factory=list)
@@ -270,6 +271,25 @@ def is_all_ready_system_message(text: str) -> bool:
     if "所有" in normalized and "准备" in normalized:
         return True
     return False
+
+
+def banchobot_relevant(text: str) -> bool:
+    """The single allowlist of BanchoBot/SYSTEM lines the engine recognises.
+
+    Only these are processed by handle_message; every other BanchoBot line
+    (joins, slot moves, countdown ticks, the !mp settings dump, glhf, ...) is
+    dropped at the entrance. Edit this one place to change what the engine sees.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return bool(
+        MP_ROOM_RE.search(stripped)  # 1) "Created the tournament match ..."
+        or MP_ROLL_RE.match(stripped)  # 2) "<player> rolls N point(s)"
+        or MP_RESULT_RE.match(stripped)  # 3) "<player> finished playing (Score: N, ...)"
+        or MATCH_FINISHED_RE.search(stripped)  # 4) "The match has finished"
+        or is_all_ready_system_message(stripped)  # 5) "All players are ready"
+    )
 
 
 def parse_play_result(text: str) -> tuple[str, int] | None:
@@ -653,6 +673,8 @@ class RefereeEngine:
         state.last_event = f"[{tag}] {text}"
 
         if tag in {"BanchoBot", "SYSTEM"}:
+            if not banchobot_relevant(text):
+                return  # drop BanchoBot/SYSTEM noise before any processing
             match = MP_ROOM_RE.search(text)
             if tag == "BanchoBot" and match and state.stage == "creating_room":
                 state.room_id = match.group(1)
@@ -672,6 +694,8 @@ class RefereeEngine:
                 return
             sender, message = parsed
             if sender.lower() in {"banchobot", "system"}:
+                if not banchobot_relevant(message):
+                    return  # drop BanchoBot noise relayed into the channel
                 if session.is_bp_managed:
                     self._bp_observe_roll(session, message)
                 if session.is_bo_mode:
@@ -839,9 +863,9 @@ class RefereeEngine:
         elif action.id == "join_timer":
             state.join_timer_deadline = time.time() + session.rulepack.join_timer
             if state.stage == "inviting" and self._inviting_complete(session):
-                state.stage = self._post_invite_stage(session)
+                self._enter_post_invite_stage(session)
         elif state.stage == "inviting" and self._inviting_complete(session):
-            state.stage = self._post_invite_stage(session)
+            self._enter_post_invite_stage(session)
         elif action.id == "ready_start":
             state.stage = "playing"
         elif action.id.startswith("setmap:"):
@@ -873,6 +897,11 @@ class RefereeEngine:
         if session.is_bp_managed:
             return "bo_roll"
         return "bo_pick" if session.is_bo_mode else "waiting_players"
+
+    def _enter_post_invite_stage(self, session: RefereeSession) -> None:
+        session.state.stage = self._post_invite_stage(session)
+        # The roll phase opens exactly when we reach bo_roll.
+        session.state.roll_phase = session.state.stage == "bo_roll"
 
     def describe_state(self, session: RefereeSession) -> dict[str, Any]:
         """Deterministic snapshot of the match for the AI assistant to ground on.
@@ -1098,7 +1127,9 @@ class RefereeEngine:
 
     def _bp_observe_roll(self, session: RefereeSession, text: str) -> None:
         state = session.state
-        if state.stage != "bo_roll" or (len(state.pick_order) == 2 and len(state.ban_order) == 2):
+        # Only recognise roll messages while the roll phase is open (players may
+        # !roll for fun at other times — those must be ignored).
+        if not state.roll_phase or (len(state.pick_order) == 2 and len(state.ban_order) == 2):
             return
         roll = parse_roll(text)
         if not roll:
@@ -1157,6 +1188,7 @@ class RefereeEngine:
                 return
         if len(state.pick_order) == 2 and len(state.ban_order) == 2:
             state.stage = "bo_pick"
+            state.roll_phase = False  # roll phase closes once order is decided
             action, team = self._bp_current(session)
             tail = f" // {team} to {action}" if team else ""
             state.pending_announce = (

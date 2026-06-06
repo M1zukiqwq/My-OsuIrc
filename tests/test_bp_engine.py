@@ -14,6 +14,7 @@ from my_osuirc.referee.core import (
     SessionConfig,
     SessionState,
     Team,
+    banchobot_relevant,
 )
 
 CHANNEL = "#mp_1"
@@ -47,7 +48,9 @@ class BpEngineTest(unittest.TestCase):
             teams=[Team("Red", ["Alice"]), Team("Blue", ["Bob"])],
             best_of=best_of, first_to=first_to,
         )
-        state = SessionState(session_id="s", stage="bo_roll", channel=CHANNEL, score={"Red": 0, "Blue": 0})
+        state = SessionState(
+            session_id="s", stage="bo_roll", roll_phase=True, channel=CHANNEL, score={"Red": 0, "Blue": 0}
+        )
         return RefereeSession(config=config, rulepack=pack, state=state)
 
     def setUp(self) -> None:
@@ -83,6 +86,44 @@ class BpEngineTest(unittest.TestCase):
         self.feed(session, f"<BanchoBot> Bob finished playing (Score: {bob_score}, PASSED).")
         self.feed(session, "<BanchoBot> The match has finished!")
         self.settle(session)
+
+    def test_roll_recognised_only_in_roll_phase(self) -> None:
+        session = self.make_session(["pick"])
+        session.state.roll_phase = False  # phase closed: a stray !roll must be ignored
+        self.feed(session, "<BanchoBot> Alice rolls 70 point(s)")
+        self.assertEqual(session.state.rolls, {})
+        session.state.roll_phase = True   # phase open: now it counts
+        self.feed(session, "<BanchoBot> Alice rolls 70 point(s)")
+        self.assertEqual(session.state.rolls, {"Red": 70})
+
+    def test_banchobot_allowlist(self) -> None:
+        for ok in [
+            "Created the tournament match https://osu.ppy.sh/mp/1",
+            "Alice rolls 5 point(s)",
+            "Alice finished playing (Score: 1, PASSED).",
+            "The match has finished!",
+            "All players are ready",
+        ]:
+            self.assertTrue(banchobot_relevant(ok), ok)
+        for noise in [
+            "Alice joined in slot 1 for team blue.",
+            "Countdown ends in 30 seconds",
+            "Alice changed to Red",
+            "Beatmap: https://osu.ppy.sh/b/1 Song",
+            "glhf",
+        ]:
+            self.assertFalse(banchobot_relevant(noise), noise)
+
+    def test_engine_ignores_banchobot_noise(self) -> None:
+        session = self.make_session(["pick"])
+        session.state.stage = "bo_playing"
+        session.state.roll_phase = False
+        session.state.current_pick_code = "NM1"
+        self.feed(session, "<BanchoBot> Alice joined in slot 1 for team blue.")
+        self.feed(session, "<BanchoBot> Countdown ends in 30 seconds")
+        self.assertEqual(session.state.current_map_scores, {})  # noise changed nothing
+        self.feed(session, "<BanchoBot> Alice finished playing (Score: 100, PASSED).")
+        self.assertEqual(session.state.current_map_scores, {"Alice": 100})  # real result still counts
 
     def test_roll_resolves_pick_and_ban_order(self) -> None:
         session = self.make_session(["pick"])
