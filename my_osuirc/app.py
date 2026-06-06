@@ -445,20 +445,77 @@ def run_agent(
     agent = RefereeAgent(client, api=None, assistant=assistant)
     agent.sessions[session.id] = session
 
-    loop = threading.Thread(target=agent.run, daemon=True)
-    loop.start()
-    print("控制台：/human 接管 | /ai 交回 | /state 状态 | /quit 退出")
     try:
-        while agent.running and client._running:
-            try:
-                line = input(f"[{'AI' if agent.auto else '人工'}] > ")
-            except EOFError:
-                break
-            agent.handle_console(line)
+        curses.wrapper(lambda stdscr: _agent_console(stdscr, agent, client))
     except KeyboardInterrupt:
         pass
-    agent.running = False
-    client.disconnect()
+    except Exception as exc:
+        print(f"\nConsole error: {exc}")
+    finally:
+        agent.running = False
+        client.disconnect()
+
+
+def _agent_console(stdscr: curses.window, agent: RefereeAgent, client: IrcClient) -> None:
+    """Scrollable curses console for the merged agent: a history pane you can
+    scroll (↑/↓/PgUp/PgDn/Home/End) plus an input line for /human /ai /state ..."""
+    ui = ChatUI(stdscr)
+    view = "REF"
+    ui.set_status(view, client.nick, force_redraw=True)
+    agent.output = lambda line: ui.add_message(view, line, redraw=False)
+    ui.add_message(view, "控制台：/human 接管 | /ai 交回 | /state 状态 | /quit 退出", redraw=False)
+    ui.add_message(view, "滚动历史：↑/↓ 行 · PgUp/PgDn 翻页 · Home/End 顶/底（向上滚动时新消息不会打断）", redraw=False)
+    agent.running = True
+
+    def submit() -> None:
+        line = ui.input_buffer
+        ui.input_buffer = ""
+        if line.strip():
+            agent.handle_console(line)
+
+    def handle_key(ch) -> None:
+        if isinstance(ch, str):
+            if ch in ("\r", "\n"):
+                submit()
+            elif ch in ("\x7f", "\x08", "\b"):
+                ui.input_buffer = ui.input_buffer[:-1]
+            elif ch.isprintable():
+                ui.input_buffer += ch
+            return
+        if ch == curses.KEY_ENTER:
+            submit()
+        elif ch in (curses.KEY_BACKSPACE, curses.KEY_DC):
+            ui.input_buffer = ui.input_buffer[:-1]
+        elif ch == curses.KEY_UP:
+            ui.scroll_up()
+        elif ch == curses.KEY_DOWN:
+            ui.scroll_down()
+        elif ch == curses.KEY_PPAGE:
+            ui.scroll_page_up()
+        elif ch == curses.KEY_NPAGE:
+            ui.scroll_page_down()
+        elif ch == curses.KEY_HOME:
+            ui.scroll_to_top()
+        elif ch == curses.KEY_END:
+            ui.scroll_to_bottom()
+
+    ui._draw_messages()
+    while agent.running and client._running:
+        before = len(ui.messages)
+        agent.step()
+        keyed = False
+        while True:
+            try:
+                ch = stdscr.get_wch()
+            except curses.error:
+                break
+            handle_key(ch)
+            keyed = True
+        if keyed or len(ui.messages) != before:
+            mode = "AI 自动" if agent.auto else "人工接管"
+            ui.set_status(f"{view}  {mode}", client.nick)
+            ui._draw_messages()
+        time.sleep(0.05)
 
 
 def run_import_rulebook(

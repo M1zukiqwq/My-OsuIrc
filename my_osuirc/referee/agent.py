@@ -115,9 +115,8 @@ class RefereeAgent:
 
     def drain_irc(self) -> None:
         for tag, text in self.client.drain_messages():
-            routed = self.route_message(tag, text)
-            if not routed and tag != "SYSTEM":
-                self.output(f"[{tag}] {text}")
+            self.route_message(tag, text)
+            self.output(f"[{tag}] {text}")  # surface every room line so the operator can read along
 
     # -- local operator console (merged agent = one process per room) --
 
@@ -156,6 +155,7 @@ class RefereeAgent:
         session = self.solo_session()
         if session and session.state.channel:
             self.client.send(session.state.channel, text)
+            self.output(f"[{session.state.channel}] <{self.client.nick}> {text}")  # echo own send
         else:
             self.output("房间还没建好，暂时无法发送。")
 

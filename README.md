@@ -168,6 +168,7 @@ IRC 密码获取：登录 [osu!](https://osu.ppy.sh) → Settings → Legacy IRC
 | `/state` | 查看当前阶段 / 比分 / 轮到谁 / 已 ban / TB 是否解锁 |
 | `/quit` | 退出（断开连接） |
 
+控制台是带**可滚动历史**的界面（房间消息与机器人动作实时显示）：↑/↓ 滚一行、PgUp/PgDn 翻页、Home/End 到顶/底；向上回看时新消息不会打断。
 人工与 AI 共用同一个 IRC 连接（房主本人），接管无需第二个账号、无需 `!mp addref`。
 
 ### 可选服务端 HTTP API
