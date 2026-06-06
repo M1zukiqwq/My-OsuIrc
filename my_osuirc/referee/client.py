@@ -164,6 +164,7 @@ class ServerRefereeCli:
             self.output("Match name is required.")
             return None
         match_time = self.input_func("match time (ISO/local, optional): ").strip()
+        best_of = self._prompt_int("best of (e.g. 11, blank = not a bracket match): ")
         teams = self._prompt_teams(selected)
         override = self.input_func("mappool override link/note (optional): ").strip()
         payload = {
@@ -172,6 +173,7 @@ class ServerRefereeCli:
             "teams": teams,
             "match_time": match_time,
             "room_lead_time_sec": DEFAULT_ROOM_LEAD_TIME_SEC,
+            "best_of": best_of,
             "mappool_override": [{"source": override}] if override else [],
         }
         created = self.api.create_session(payload)
@@ -222,6 +224,16 @@ class ServerRefereeCli:
                 return record
         matches = [record for record in sessions if record["config"]["id"].startswith(identifier)]
         return matches[0] if len(matches) == 1 else None
+
+    def _prompt_int(self, prompt: str) -> int:
+        raw = self.input_func(prompt).strip()
+        if not raw:
+            return 0
+        try:
+            return int(raw)
+        except ValueError:
+            self.output("Not a number; ignoring.")
+            return 0
 
     def _prompt_teams(self, rulepack: dict[str, Any]) -> list[dict[str, Any]]:
         teams: list[dict[str, Any]] = []

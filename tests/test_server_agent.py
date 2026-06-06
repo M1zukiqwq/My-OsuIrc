@@ -185,7 +185,7 @@ class ServerCase(unittest.TestCase):
                 sqlite_store.close()
 
     def test_main_modes_have_help(self) -> None:
-        for mode in ("server", "agent", "referee"):
+        for mode in ("server", "agent", "chat"):
             result = subprocess.run(
                 [sys.executable, "main.py", mode, "--help"],
                 cwd=Path(__file__).resolve().parents[1],

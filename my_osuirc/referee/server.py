@@ -243,6 +243,8 @@ class SQLiteRefereeStore:
         match_time: str = "",
         room_lead_time_sec: int = DEFAULT_ROOM_LEAD_TIME_SEC,
         mappool_override: list[dict[str, Any]] | None = None,
+        best_of: int = 0,
+        first_to: int = 0,
     ) -> RefereeSession:
         rulepack = self.load_rulepack(rulepack_id)
         if not rulepack:
@@ -258,6 +260,8 @@ class SQLiteRefereeStore:
             match_time=match_time,
             room_lead_time_sec=int(room_lead_time_sec or DEFAULT_ROOM_LEAD_TIME_SEC),
             mappool_override=mappool_override or [],
+            best_of=int(best_of or 0),
+            first_to=int(first_to or 0),
         )
         state = SessionState(session_id=config.id, stage="scheduled", score={team.name: 0 for team in team_objs})
         session = RefereeSession(config=config, rulepack=rulepack, state=state)
@@ -486,6 +490,8 @@ class RefereeRequestHandler(BaseHTTPRequestHandler):
             match_time=str(body.get("match_time") or ""),
             room_lead_time_sec=int(body.get("room_lead_time_sec") or DEFAULT_ROOM_LEAD_TIME_SEC),
             mappool_override=list(body.get("mappool_override") or []),
+            best_of=int(body.get("best_of") or 0),
+            first_to=int(body.get("first_to") or 0),
         )
         self._send({"session": self.server.store.load_session_record(session.id)}, status=201)
 

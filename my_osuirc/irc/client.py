@@ -1,7 +1,9 @@
 """Minimal IRC protocol handler."""
 
+import re
 import socket
 import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import Callable
@@ -13,6 +15,15 @@ _debug_log.write("\n===== new session =====\n")
 def _debug(msg: str):
     _debug_log.write(msg + "\n")
     _debug_log.flush()
+
+
+_UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.#-]+")
+
+
+def _chat_log_filename(target: str) -> str:
+    """Map an IRC target (#mp_123 / BanchoBot / SYSTEM) to a safe log filename."""
+    name = _UNSAFE_NAME_RE.sub("_", target.strip()).lstrip("#") or "misc"
+    return f"{name}.log"
 
 
 def parse_irc_message(raw: str) -> tuple[str, str, list[str]]:
@@ -56,11 +67,18 @@ class IrcClient:
         password: str,
         server: str = "irc.ppy.sh",
         port: int = 6667,
+        chat_log_dir: str | None = "logs/chat",
     ):
         self.server = server
         self.port = port
         self.nick = nick
         self.password = password
+
+        # Per-target human-readable chat log (for later troubleshooting).
+        # One file per channel/PM under chat_log_dir; created lazily on first write.
+        # Pass chat_log_dir=None / "" to disable.
+        self._chat_log_dir = Path(chat_log_dir) if chat_log_dir else None
+        self._chat_log_lock = threading.Lock()
 
         self._sock: socket.socket | None = None
         self._reader_thread: threading.Thread | None = None
@@ -114,6 +132,7 @@ class IrcClient:
         self._send_raw(f"JOIN {channel}")
 
     def send(self, target: str, text: str) -> None:
+        self._log_chat(target, f"<{self.nick}> {text}")
         self._send_raw(f"PRIVMSG {target} :{text}")
 
     def drain_messages(self) -> list[tuple[str, str]]:
@@ -243,7 +262,26 @@ class IrcClient:
                     self._enqueue("SYSTEM", line)
 
     def _enqueue(self, tag: str, text: str) -> None:
+        self._log_chat(tag, text)
         with self._queue_lock:
             self.message_queue.append((tag, text))
         if self.on_message:
             self.on_message()
+
+    def chat_log_path(self, target: str):
+        """Path of a target's chat log file, or None when chat logging is disabled."""
+        if not self._chat_log_dir:
+            return None
+        return self._chat_log_dir / _chat_log_filename(target)
+
+    def _log_chat(self, target: str, text: str) -> None:
+        if not self._chat_log_dir or not target:
+            return
+        line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {text}\n"
+        try:
+            with self._chat_log_lock:
+                self._chat_log_dir.mkdir(parents=True, exist_ok=True)
+                with (self._chat_log_dir / _chat_log_filename(target)).open("a", encoding="utf-8") as handle:
+                    handle.write(line)
+        except OSError as exc:
+            _debug(f"!!! chat log write failed for {target!r}: {exc}")

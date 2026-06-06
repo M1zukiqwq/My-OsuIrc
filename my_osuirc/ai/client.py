@@ -38,15 +38,32 @@ class OpenAICompatibleClient:
             extra_body=extra_body if isinstance(extra_body, dict) else {},
         )
 
-    def extract_rulepack(self, name: str, rules_url: str, mappool_url: str) -> dict[str, Any]:
-        rules_text = fetch_url_text(rules_url) if rules_url else ""
-        mappool_text = fetch_url_text(mappool_url) if mappool_url else ""
+    def extract_rulepack(
+        self,
+        name: str,
+        rules_url: str = "",
+        mappool_url: str = "",
+        rules_text: str = "",
+        mappool_text: str = "",
+    ) -> dict[str, Any]:
+        """Parse a tournament rulebook / mappool into a structured draft.
+
+        Text can be supplied directly (rules_text / mappool_text) — e.g. a local
+        Markdown rulebook or a tab-separated mappool — or fetched from a URL.
+        """
+        rules_text = rules_text or (fetch_url_text(rules_url) if rules_url else "")
+        mappool_text = mappool_text or (fetch_url_text(mappool_url) if mappool_url else "")
         prompt = (
             "Extract an osu! tournament referee rulepack as strict JSON. "
             "Return only one JSON object with optional keys: name, bp_timer, "
             "join_timer, ready_start_countdown, start_on_ready_settings_check, "
             "start_on_system_all_ready, start_on_join_timer_end, format, team_template, "
             "mappool, raw_rules. "
+            "Each mappool item must be an object with keys: code (the pool label like "
+            "NM1/HD2/DT3/TB), beatmap_id (integer), mods (e.g. 'NF', 'NF HR'), "
+            "map_command (e.g. '!mp map 5223058 0'), mod_command (e.g. '!mp mods NF'), "
+            "and title when available. "
+            "Do NOT put best_of in format — best-of is chosen per match when the room opens. "
             "If a field is not explicitly stated, omit it; do not invent values.\n\n"
             f"Rulepack name: {name}\n"
             f"Rules URL: {rules_url}\n"
@@ -57,11 +74,11 @@ class OpenAICompatibleClient:
         content = self.chat(prompt)
         return extract_json_object(content)
 
-    def chat(self, prompt: str) -> str:
+    def chat(self, prompt: str, system: str | None = None) -> str:
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": "You extract structured osu! tournament referee rules."},
+                {"role": "system", "content": system or "You extract structured osu! tournament referee rules."},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0,

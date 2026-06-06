@@ -221,6 +221,8 @@ class RefereeSupervisor:
             self.output("Match name is required.")
             return None
         match_time = self.input_func("match time: ").strip()
+        best_of_raw = self.input_func("best of (e.g. 11, blank = not a bracket match): ").strip()
+        best_of = int(best_of_raw) if best_of_raw.isdigit() else 0
         teams = self._prompt_teams(rulepack)
         override = self.input_func("mappool override link/note (optional): ").strip()
         session = self.create_session(
@@ -228,6 +230,7 @@ class RefereeSupervisor:
             rulepack=rulepack,
             teams=teams,
             match_time=match_time,
+            best_of=best_of,
             mappool_override=[{"source": override}] if override else None,
         )
         self.output(f"Created session {session.id}. AI will create the mp room on next tick.")
@@ -270,6 +273,8 @@ class RefereeSupervisor:
         teams: list[Team],
         match_time: str = "",
         mappool_override: list[dict] | None = None,
+        best_of: int = 0,
+        first_to: int = 0,
     ) -> RefereeSession:
         config = SessionConfig(
             id=new_id("session", name),
@@ -278,6 +283,8 @@ class RefereeSupervisor:
             teams=teams,
             match_time=match_time,
             mappool_override=mappool_override or [],
+            best_of=int(best_of or 0),
+            first_to=int(first_to or 0),
         )
         state = SessionState(
             session_id=config.id,
@@ -357,6 +364,7 @@ class RefereeSupervisor:
 
     def tick_sessions(self) -> None:
         for session in list(self.sessions.values()):
+            self.engine.tick_timeouts(session)
             for action in self.engine.next_actions(session):
                 if action.risk != "low":
                     continue

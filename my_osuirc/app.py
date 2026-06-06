@@ -12,22 +12,34 @@ If not provided, nick and password will be prompted in the terminal for IRC mode
 import argparse
 import curses
 import getpass
+import json
 import locale
 import re
 import sys
 import threading
 import time
 from collections import deque
+from pathlib import Path
 
 if sys.platform == "win32":
     import msvcrt
 
+from my_osuirc.ai.client import OpenAICompatibleClient
 from my_osuirc.chat.ui import ChatUI
 from my_osuirc.irc.client import IrcClient
 from my_osuirc.referee.agent import RefereeAgent
-from my_osuirc.referee.api import RefereeApiClient
-from my_osuirc.referee.client import ServerRefereeCli
+from my_osuirc.referee.assistant import RefereeAssistant
+from my_osuirc.referee.core import (
+    RefereeSession,
+    SessionConfig,
+    SessionState,
+    Team,
+    new_id,
+    rulepack_from_draft,
+)
 from my_osuirc.referee.server import SQLiteRefereeStore, import_json_store, run_server
+
+DEFAULT_RULEBOOK = "docs/sample-rulebook-otan-s1.json"
 
 SERVER = "irc.ppy.sh"
 PORT = 6667
@@ -35,8 +47,8 @@ PORT = 6667
 MP_ROOM_RE = re.compile(r"https://osu\.ppy\.sh/mp/(\d+)")
 
 
-def chat_main(stdscr: curses.window, nick: str, password: str):
-    client = IrcClient(nick=nick, password=password, server=SERVER, port=PORT)
+def chat_main(stdscr: curses.window, nick: str, password: str, chat_log_dir: str | None = "logs/chat"):
+    client = IrcClient(nick=nick, password=password, server=SERVER, port=PORT, chat_log_dir=chat_log_dir)
 
     ui = ChatUI(stdscr)
 
@@ -347,9 +359,9 @@ def prompt_credentials(args: argparse.Namespace) -> tuple[str, str]:
     return nick, password
 
 
-def run_chat_tui(nick: str, password: str) -> None:
+def run_chat_tui(nick: str, password: str, chat_log_dir: str | None = "logs/chat") -> None:
     try:
-        curses.wrapper(lambda stdscr: chat_main(stdscr, nick, password))
+        curses.wrapper(lambda stdscr: chat_main(stdscr, nick, password, chat_log_dir))
     except KeyboardInterrupt:
         pass
     except Exception as e:
@@ -357,25 +369,94 @@ def run_chat_tui(nick: str, password: str) -> None:
         input("Press Enter to exit...")
 
 
-def run_agent(nick: str, password: str, server_url: str) -> None:
-    client = IrcClient(nick=nick, password=password, server=SERVER, port=PORT)
+def _resolve_teams(rulepack, red: str | None, blue: str | None) -> list[Team]:
+    """Build teams from --red/--blue flags ('Name=p1,p2' or just 'player') or prompts."""
+    labels = (rulepack.team_template or ["red", "blue"])[:2]
+    specs = [red, blue]
+    teams: list[Team] = []
+    for index, label in enumerate(labels):
+        spec = specs[index] if index < len(specs) else None
+        if not spec:
+            name = input(f"{label} 队名/选手名: ").strip() or label
+            players_text = input(f"{name} 选手(逗号分隔, 留空=同队名): ").strip() or name
+        else:
+            name, sep, players_text = spec.partition("=")
+            name = name.strip() or label
+            players_text = players_text if sep else name
+        players = [p.strip() for p in players_text.split(",") if p.strip()]
+        teams.append(Team(name=name, players=players))
+    return teams
+
+
+def run_agent(
+    nick: str,
+    password: str,
+    rulebook: str = DEFAULT_RULEBOOK,
+    best_of: int = 0,
+    red: str | None = None,
+    blue: str | None = None,
+    chat_log_dir: str | None = "logs/chat",
+    rules_file: str = "rule.txt",
+) -> None:
+    """Merged single-room operator: one process = one room. The AI auto-referees;
+    /human pauses it for manual takeover, /ai resumes."""
+    rulebook_path = Path(rulebook)
+    if not rulebook_path.exists():
+        print(f"Rulebook not found: {rulebook}")
+        return
+    draft = json.loads(rulebook_path.read_text(encoding="utf-8"))
+    rulepack = rulepack_from_draft(name=str(draft.get("name") or "Rulebook"), draft=draft, confirmed=True)
+
+    teams = _resolve_teams(rulepack, red, blue)
+    if not any(team.players for team in teams):
+        print("需要至少一名选手。")
+        return
+    if best_of <= 0:
+        try:
+            best_of = int(input("best of (e.g. 11): ").strip() or "11")
+        except ValueError:
+            best_of = 11
+
+    match_name = " vs ".join(team.name for team in teams) or "Match"
+    config = SessionConfig(
+        id=new_id("session", match_name), name=match_name, rulepack_id=rulepack.id, teams=teams, best_of=best_of
+    )
+    state = SessionState(session_id=config.id, stage="scheduled", score={team.name: 0 for team in teams})
+    session = RefereeSession(config=config, rulepack=rulepack, state=state)
+
+    rules_text = ""
+    if rules_file and Path(rules_file).exists():
+        rules_text = Path(rules_file).read_text(encoding="utf-8", errors="replace")
+    assistant = RefereeAssistant(OpenAICompatibleClient.from_env(), rules_text=rules_text)
+
+    client = IrcClient(nick=nick, password=password, server=SERVER, port=PORT, chat_log_dir=chat_log_dir)
     print(f"Connecting to {SERVER}:{PORT} ...")
     try:
         client.connect()
     except Exception as e:
         print(f"Connection failed: {e}")
         return
-    print(f"Connected as {nick}.")
-    agent = RefereeAgent(client, RefereeApiClient(server_url))
+    print(
+        f"Connected as {nick}. Match: {match_name} (BO{best_of}). "
+        f"AI assistant: {'on' if assistant.enabled else 'off'}."
+    )
+    agent = RefereeAgent(client, api=None, assistant=assistant)
+    agent.sessions[session.id] = session
+
+    loop = threading.Thread(target=agent.run, daemon=True)
+    loop.start()
+    print("控制台：/human 接管 | /ai 交回 | /state 状态 | /quit 退出")
     try:
-        agent.run()
+        while agent.running and client._running:
+            try:
+                line = input(f"[{'AI' if agent.auto else '人工'}] > ")
+            except EOFError:
+                break
+            agent.handle_console(line)
     except KeyboardInterrupt:
-        client.disconnect()
-
-
-def run_server_referee_cli(server_url: str) -> None:
-    cli = ServerRefereeCli(RefereeApiClient(server_url))
-    cli.run()
+        pass
+    agent.running = False
+    client.disconnect()
 
 
 def run_import_json(root: str, db_path: str) -> None:
@@ -401,23 +482,25 @@ def build_parser() -> argparse.ArgumentParser:
     server.add_argument("--db", default="referee.db", help="SQLite database path")
     server.add_argument("--import-json", default="", help="import existing rulepacks/sessions/logs before serving")
 
-    agent = subparsers.add_parser("agent", help="run Bancho IRC referee agent")
-    agent.add_argument("--nick", default=None, help="Your osu! username")
+    agent = subparsers.add_parser("agent", help="run one room: AI auto-referee + local /human /ai console")
+    agent.add_argument("--nick", default=None, help="Your osu! username (this account hosts the room)")
     agent.add_argument("--password", default=None, help="Your IRC server password")
-    agent.add_argument("--server-url", default="http://127.0.0.1:8765", help="local referee server URL")
-
-    referee = subparsers.add_parser("referee", help="run human referee CLI")
-    referee.add_argument("--server-url", default="http://127.0.0.1:8765", help="local referee server URL")
+    agent.add_argument("--rulebook", default=DEFAULT_RULEBOOK, help="rulepack JSON (mappool + format)")
+    agent.add_argument("--best-of", type=int, default=0, help="best-of for this match (prompted if omitted)")
+    agent.add_argument("--red", default=None, help="red team as 'Name=p1,p2' or just a player name")
+    agent.add_argument("--blue", default=None, help="blue team as 'Name=p1,p2' or just a player name")
+    agent.add_argument("--chat-log-dir", default="logs/chat", help="per-room chat log dir (empty to disable)")
+    agent.add_argument("--rules-file", default="rule.txt", help="rulebook text for the AI assistant (Q&A grounding)")
 
     chat = subparsers.add_parser("chat", help="run legacy curses IRC chat client")
     chat.add_argument("--nick", default=None, help="Your osu! username")
     chat.add_argument("--password", default=None, help="Your IRC server password")
+    chat.add_argument("--chat-log-dir", default="logs/chat", help="per-room chat log dir (empty to disable)")
 
     importer = subparsers.add_parser("import-json", help="one-time import from JSON dirs into SQLite")
     importer.add_argument("--root", default=".", help="directory containing rulepacks/, sessions/, logs/")
     importer.add_argument("--db", default="referee.db", help="SQLite database path")
 
-    p.set_defaults(mode="referee", server_url="http://127.0.0.1:8765")
     return p
 
 
@@ -442,14 +525,23 @@ def main() -> None:
         run_server(args.host, args.port, args.db)
     elif args.mode == "agent":
         nick, password = prompt_credentials(args)
-        run_agent(nick, password, args.server_url)
+        run_agent(
+            nick,
+            password,
+            rulebook=args.rulebook,
+            best_of=args.best_of,
+            red=args.red,
+            blue=args.blue,
+            chat_log_dir=args.chat_log_dir or None,
+            rules_file=args.rules_file,
+        )
     elif args.mode == "chat":
         nick, password = prompt_credentials(args)
-        run_chat_tui(nick, password)
+        run_chat_tui(nick, password, args.chat_log_dir or None)
     elif args.mode == "import-json":
         run_import_json(args.root, args.db)
     else:
-        run_server_referee_cli(args.server_url)
+        build_parser().print_help()
 
 
 if __name__ == "__main__":

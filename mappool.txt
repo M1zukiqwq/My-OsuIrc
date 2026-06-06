@@ -1,0 +1,19 @@
+#	artist - title [difficulty]	map command	mod command
+NM1	Isekaijoucho - Kurenazumu Yakusoku [Tomorrow]	!mp map 5223058 0	!mp mods NF
+NM2	seatrus - Hoshi Furu Yoru to Ichirin no Hana [Ranka's Insane]	!mp map 5698550 0	!mp mods NF
+NM3	Orangestar feat. Mary - DAYBREAK FRONTLINE [Alt]	!mp map 1636388 0	!mp mods NF
+NM4	nominomu - against cacophony (feat. Mai) [collab insane]	!mp map 5238474 0	!mp mods NF
+NM5	aYu-dachi - Hoshi no Tooru Natsuzora ni Negau [Extra]	!mp map 4728864 0	!mp mods NF
+NM6	tailspun - Bloom in Two [Insane]	!mp map 5235326 0	!mp mods NF
+HD1	JIN - Shounen Brave [_lai's Insane]	!mp map 2034019 0	!mp mods NF HD
+HD2	Chouchou-P feat. Hatsune Miku - White Prism [Nexus' Insane]	!mp map 3041562 0	!mp mods NF HD
+HD3	teikuru - Mind Release [Zelq's Insane]	!mp map 3366925 0	!mp mods NF HD
+HR1	Kohinata Chiko - Rashikunai Koi [Insane]	!mp map 4869621 0	!mp mods NF HR
+HR2	Yorushika - Tada Kimi ni Hare [Ayucchi's Insane]	!mp map 2503454 0	!mp mods NF HR
+HR3	HiraYu - World end lullaby [insane]	!mp map 3971640 0	!mp mods NF HR
+DT1	Dave Rodgers - Deja Vu [Street Stage]	!mp map 1054656 0	!mp mods NF DT
+DT2	Suara - Kotowari [KeyWee's Hard]	!mp map 4505726 0	!mp mods NF DT
+DT3	NILFRUITS - Ironina [Pigeons' Hard]	!mp map 3618329 0	!mp mods NF DT
+HP1	Mike Posner - I Took A Pill In Ibiza (Seeb Remix) [Another]	!mp map 3634672 0	!mp mods NF
+HP2	rusino - Looping the Rooms feat. Hatsune Miku [Endless Xtra]	!mp map 5497651 0	!mp mods NF Freemod
+TB	Ludicin - Everlasting Eternity [Fragment of A Distant Star]	!mp map 5584123 0	!mp mods NF Freemod

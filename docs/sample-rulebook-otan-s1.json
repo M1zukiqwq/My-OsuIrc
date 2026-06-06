@@ -1,0 +1,180 @@
+{
+  "name": "o!TA:N S1 (BO11 mappool)",
+  "rules_url": "",
+  "mappool_url": "",
+  "bp_timer": 90,
+  "join_timer": 120,
+  "ready_start_countdown": 7,
+  "start_on_ready_settings_check": true,
+  "start_on_system_all_ready": true,
+  "start_on_join_timer_end": true,
+  "team_template": [
+    "red",
+    "blue"
+  ],
+  "format": {
+    "team_mode": "TeamVs",
+    "win_condition": "ScoreV2",
+    "bp_order": [
+      "pick",
+      "ban",
+      "pick",
+      "ban"
+    ],
+    "slots": 3
+  },
+  "mappool": [
+    {
+      "code": "NM1",
+      "title": "Isekaijoucho - Kurenazumu Yakusoku [Tomorrow]",
+      "beatmap_id": 5223058,
+      "mods": "NF",
+      "map_command": "!mp map 5223058 0",
+      "mod_command": "!mp mods NF"
+    },
+    {
+      "code": "NM2",
+      "title": "seatrus - Hoshi Furu Yoru to Ichirin no Hana [Ranka's Insane]",
+      "beatmap_id": 5698550,
+      "mods": "NF",
+      "map_command": "!mp map 5698550 0",
+      "mod_command": "!mp mods NF"
+    },
+    {
+      "code": "NM3",
+      "title": "Orangestar feat. Mary - DAYBREAK FRONTLINE [Alt]",
+      "beatmap_id": 1636388,
+      "mods": "NF",
+      "map_command": "!mp map 1636388 0",
+      "mod_command": "!mp mods NF"
+    },
+    {
+      "code": "NM4",
+      "title": "nominomu - against cacophony (feat. Mai) [collab insane]",
+      "beatmap_id": 5238474,
+      "mods": "NF",
+      "map_command": "!mp map 5238474 0",
+      "mod_command": "!mp mods NF"
+    },
+    {
+      "code": "NM5",
+      "title": "aYu-dachi - Hoshi no Tooru Natsuzora ni Negau [Extra]",
+      "beatmap_id": 4728864,
+      "mods": "NF",
+      "map_command": "!mp map 4728864 0",
+      "mod_command": "!mp mods NF"
+    },
+    {
+      "code": "NM6",
+      "title": "tailspun - Bloom in Two [Insane]",
+      "beatmap_id": 5235326,
+      "mods": "NF",
+      "map_command": "!mp map 5235326 0",
+      "mod_command": "!mp mods NF"
+    },
+    {
+      "code": "HD1",
+      "title": "JIN - Shounen Brave [_lai's Insane]",
+      "beatmap_id": 2034019,
+      "mods": "NF HD",
+      "map_command": "!mp map 2034019 0",
+      "mod_command": "!mp mods NF HD"
+    },
+    {
+      "code": "HD2",
+      "title": "Chouchou-P feat. Hatsune Miku - White Prism [Nexus' Insane]",
+      "beatmap_id": 3041562,
+      "mods": "NF HD",
+      "map_command": "!mp map 3041562 0",
+      "mod_command": "!mp mods NF HD"
+    },
+    {
+      "code": "HD3",
+      "title": "teikuru - Mind Release [Zelq's Insane]",
+      "beatmap_id": 3366925,
+      "mods": "NF HD",
+      "map_command": "!mp map 3366925 0",
+      "mod_command": "!mp mods NF HD"
+    },
+    {
+      "code": "HR1",
+      "title": "Kohinata Chiko - Rashikunai Koi [Insane]",
+      "beatmap_id": 4869621,
+      "mods": "NF HR",
+      "map_command": "!mp map 4869621 0",
+      "mod_command": "!mp mods NF HR"
+    },
+    {
+      "code": "HR2",
+      "title": "Yorushika - Tada Kimi ni Hare [Ayucchi's Insane]",
+      "beatmap_id": 2503454,
+      "mods": "NF HR",
+      "map_command": "!mp map 2503454 0",
+      "mod_command": "!mp mods NF HR"
+    },
+    {
+      "code": "HR3",
+      "title": "HiraYu - World end lullaby [insane]",
+      "beatmap_id": 3971640,
+      "mods": "NF HR",
+      "map_command": "!mp map 3971640 0",
+      "mod_command": "!mp mods NF HR"
+    },
+    {
+      "code": "DT1",
+      "title": "Dave Rodgers - Deja Vu [Street Stage]",
+      "beatmap_id": 1054656,
+      "mods": "NF DT",
+      "map_command": "!mp map 1054656 0",
+      "mod_command": "!mp mods NF DT"
+    },
+    {
+      "code": "DT2",
+      "title": "Suara - Kotowari [KeyWee's Hard]",
+      "beatmap_id": 4505726,
+      "mods": "NF DT",
+      "map_command": "!mp map 4505726 0",
+      "mod_command": "!mp mods NF DT"
+    },
+    {
+      "code": "DT3",
+      "title": "NILFRUITS - Ironina [Pigeons' Hard]",
+      "beatmap_id": 3618329,
+      "mods": "NF DT",
+      "map_command": "!mp map 3618329 0",
+      "mod_command": "!mp mods NF DT"
+    },
+    {
+      "code": "HP1",
+      "title": "Mike Posner - I Took A Pill In Ibiza (Seeb Remix) [Another]",
+      "beatmap_id": 3634672,
+      "mods": "NF",
+      "map_command": "!mp map 3634672 0",
+      "mod_command": "!mp mods NF"
+    },
+    {
+      "code": "HP2",
+      "title": "rusino - Looping the Rooms feat. Hatsune Miku [Endless Xtra]",
+      "beatmap_id": 5497651,
+      "mods": "NF Freemod",
+      "map_command": "!mp map 5497651 0",
+      "mod_command": "!mp mods NF Freemod"
+    },
+    {
+      "code": "TB",
+      "title": "Ludicin - Everlasting Eternity [Fragment of A Distant Star]",
+      "beatmap_id": 5584123,
+      "mods": "NF Freemod",
+      "map_command": "!mp map 5584123 0",
+      "mod_command": "!mp mods NF Freemod"
+    }
+  ],
+  "id": "otan-s1",
+  "confirmed": true,
+  "pick_ban_timer": 60,
+  "prep_timer": 120,
+  "tb_prep_timer": 180,
+  "pause_timer": 120,
+  "pause_per_player": 2,
+  "abort_window": 30
+}
